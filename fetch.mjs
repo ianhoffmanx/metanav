@@ -16,8 +16,9 @@ const sprintEnd = sp => new Date(Date.parse(`${sp.startDate}T00:00:00Z`) + sp.du
 const current = (sp, today) => !!sp && sp.startDate <= today && sprintEnd(sp) > today;
 
 async function fromGithub(SINCE) {
-  const owner = config.github_owner;
-  const q = s => JSON.stringify(`${s} org:${owner} archived:false`);
+  // github_owner is one org or a list: the search takes one org: qualifier per org (several are OR'd)
+  const orgs = [config.github_owner].flat().map(o => `org:${o}`).join(' ');
+  const q = s => JSON.stringify(`${s} ${orgs} archived:false`);
   const d = await graphql(`{ me: viewer { login }
   review: search(query: ${q('is:pr is:open review-requested:@me')}, type: ISSUE, first: 30) { nodes { ... on PullRequest {
     number title url createdAt isDraft author { login } repository { name } additions deletions changedFiles
