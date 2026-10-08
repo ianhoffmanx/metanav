@@ -39,5 +39,5 @@
   },
   "output_dir": "~/metanav",
   "lookback_days": 30,
-  "judge_model": "opus"
+  "judge_model": "gpt-6-luna"
 }

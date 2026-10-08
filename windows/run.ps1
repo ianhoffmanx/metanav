@@ -11,7 +11,7 @@ $Out = if ($Cfg.output_dir) { $Cfg.output_dir } else { '~/metanav' }
 if ($Out -like '~*') { $Out = Join-Path $HOME $Out.Substring(1).TrimStart('/', '\') }
 $Start = if ($null -ne $Cfg.hours.start) { [int]$Cfg.hours.start } else { 9 }
 $End   = if ($null -ne $Cfg.hours.end)   { [int]$Cfg.hours.end }   else { 18 }
-$Model = if ($Cfg.judge_model) { $Cfg.judge_model } else { 'sonnet' }
+$Model = if ($Cfg.judge_model) { $Cfg.judge_model } else { 'gpt-6-luna' }
 
 # Python in the scripts reads and writes UTF-8 whatever the Windows code page is
 $env:PYTHONUTF8 = '1'
@@ -45,8 +45,10 @@ try {
     # Nobody reads this run while it works, so it never stops to ask (SKILL.md, "unattended"). It only judges:
     # collect.mjs does the reading in a headless Chrome of its own, so no MCP server is needed.
     $log = Join-Path $Out ('logs\' + (Get-Date -Format 'yyyyMMdd-HHmm') + '.json')
-    & claude -p "/$Name unattended" --model $Model --strict-mcp-config --permission-mode auto `
-        --allowedTools 'Skill' 'Read' 'Write' --output-format json 2>&1 | Out-File -FilePath $log -Encoding utf8
+    $env:METANAV_SKILL_DIR = $Skill
+    & codex exec --model $Model --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json `
+        --cd $Out "Read the Meta-Nav instructions at $Skill\SKILL.md and follow them for this unattended run." `
+        2>&1 | Out-File -FilePath $log -Encoding utf8
 
     # A run that failed never re-rendered: take the "syncing" flag back off
     $panel = Join-Path $Out 'index.html'

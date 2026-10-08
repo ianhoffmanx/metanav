@@ -2,18 +2,18 @@
 
 > On Windows? Follow [`INSTALL-WINDOWS.md`](INSTALL-WINDOWS.md) instead.
 
-Meta-Nav is a Claude Code skill. It builds a live "what should I do now" page from Outlook, Teams and GitHub, and refreshes it hourly on weekdays.
+Meta-Nav is a Codex skill. It builds a live "what should I do now" page from Outlook, Teams and GitHub, and refreshes it hourly on weekdays.
 
-Claude: you're reading this because the user asked you to install Meta-Nav. Work through these steps in order. Confirm each one before you move on. Stop and tell the user if anything fails. Below, `<SKILL>` is `~/.claude/skills/metanav` and `<OUT>` is the expanded `output_dir` from `config.json` (`~/metanav` → `/Users/<name>/metanav`).
+Codex: you're reading this because the user asked you to install Meta-Nav. Work through these steps in order. Confirm each one before you move on. Stop and tell the user if anything fails. Below, `<SKILL>` is `~/.agents/skills/metanav` and `<OUT>` is the expanded `output_dir` from `config.json` (`~/metanav` → `/Users/<name>/metanav`).
 
-1. **Get the files.** If `<SKILL>` doesn't exist yet, clone the repo the user gave you into it: `git clone <url> ~/.claude/skills/metanav`. The folder must be named exactly `metanav`: the skill's command (`/metanav`), its background jobs and the paths in this guide are named after it. If `~/.claude/skills/metanav` already exists and isn't this repo, stop and ask. `<SKILL>/SKILL.md` should then exist. Read `README.md`, `HOW-IT-WORKS.md` and `SKILL.md` so you know what you're installing.
+1. **Get the files.** If `<SKILL>` doesn't exist yet, clone the repo the user gave you into it: `git clone <url> ~/.agents/skills/metanav`. The folder must be named exactly `metanav`. If `~/.agents/skills/metanav` already exists and isn't this repo, stop and ask. `<SKILL>/SKILL.md` should then exist. Read `README.md`, `HOW-IT-WORKS.md` and `SKILL.md` so you know what you're installing.
 
 2. **Check prerequisites.** Report anything missing, with the exact fix:
    - The OS is macOS.
    - `node` (18 or later), `npm`, `jq` and `python3` are on the user's PATH, and `/usr/bin/python3` exists (the click store runs with it; `xcode-select --install` provides it).
    - Google Chrome is at `/Applications/Google Chrome.app`.
    - `gh auth status` succeeds, and its token scopes include `read:project`. If not, the user runs `gh auth refresh -h github.com -s read:project` themselves — it's interactive.
-   - `<SKILL>` is **not** under `~/Desktop`, `~/Documents`, `~/Downloads` or iCloud, and `~/.claude/skills` is not a symlink into one of them. macOS guards those folders, and background jobs then stop on permission prompts.
+   - `<SKILL>` is **not** under `~/Desktop`, `~/Documents`, `~/Downloads` or iCloud, and `~/.agents/skills` is not a symlink into one of them. macOS guards those folders, and background jobs then stop on permission prompts.
    - Nothing is listening on port 47615: `lsof -nP -iTCP:47615 -sTCP:LISTEN` prints nothing.
 
 3. **Install the collector's one dependency.** Run `npm ci` in `<SKILL>`. It installs `playwright-core`, which drives the installed Chrome; no browser is downloaded.
@@ -29,11 +29,11 @@ Claude: you're reading this because the user asked you to install Meta-Nav. Work
    - `calendar.skip_events`: personal calendar blocks that aren't meetings, like "Lunch".
    - `hours`: when scheduled runs happen, weekdays, on the hour. The default is 9 to 18.
    - `ado`: leave it `null` unless the user wants one Azure DevOps release pipeline watched. If they do, set it to `{ "base_url": "https://dev.azure.com/<org>/<project>", "release_definition": <id> }`, then check `az` is installed and signed in, and that `az extension show --name azure-devops` succeeds (else `az extension add --name azure-devops`).
-   - Keep `output_dir` (`~/metanav`), `lookback_days` (30) and `judge_model` (`opus`) unless the user says otherwise.
+   - Keep `output_dir` (`~/metanav`), `lookback_days` (30) and `judge_model` (`gpt-6-luna`) unless the user says otherwise.
 
 5. **Set up the two background jobs.**
    - Create `<OUT>/logs`.
-   - In `run.sh`, replace `__PATH__` with a PATH for launchd: the directories holding `claude`, `node`, `jq`, `gh` (and `az` if `ado` is set), then `/usr/bin:/bin:/usr/sbin:/sbin`, without duplicates. For `claude`, use the real binary's directory (usually `~/.local/bin`), not a terminal's wrapper under `/var/folders` — `type -a claude` lists them all. Then `chmod +x run.sh fetch.sh`.
+   - In `run.sh`, replace `__PATH__` with a PATH for launchd: the directories holding `codex`, `node`, `jq`, `gh` (and `az` if `ado` is set), then `/usr/bin:/bin:/usr/sbin:/sbin`, without duplicates. Then `chmod +x run.sh fetch.sh`.
    - In `metanav.plist` and `metanav-state.plist`, replace `__HOME__` with the user's home directory and `__OUT__` with `<OUT>`. Copy them to `~/Library/LaunchAgents/local.metanav.plist` and `~/Library/LaunchAgents/local.metanav-state.plist`.
    - Load both: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.metanav-state.plist`, then the same for `local.metanav.plist`.
    - Check the click store answers: `curl -s -X POST -H 'Origin: null' -d '{"key":"tower:read","value":{}}' http://127.0.0.1:47615/state` prints JSON with `"rev"`.

@@ -10,7 +10,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>-c</string>
-    <string>/usr/bin/python3 __HOME__/.claude/skills/metanav/state.py; exit $?</string>
+    <string>/usr/bin/python3 __HOME__/.agents/skills/metanav/state.py; exit $?</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

@@ -11,7 +11,7 @@ This document follows one refresh from start to finish, then explains each part 
   1. Collect   collect.mjs + fetch.sh       ~25 s, no AI
                Outlook · Calendar · Teams · GitHub · Azure DevOps  →  inputs.json
                    ▼
-  2. Judge     claude -p /metanav (Opus)     ~2–4 min
+  2. Judge     codex exec (GPT-6 Luna)        ~2–4 min
                inputs + the previous run + your clicks  →  brief.json
                    ▼
   3. Render    render.py                     →  index.html, stamp.js, runs/<time>.json
@@ -45,7 +45,7 @@ If Microsoft asks you to sign in again, that source is marked failed and the pag
 
 ## 3. Judging (the AI)
 
-Claude (Opus by default, `judge_model` in `config.json`) reads the inputs, the previous run's result and your clicks. It sorts everything into four lists:
+Codex (`gpt-6-luna` by default, configurable with `judge_model` in `config.json`) reads the inputs, the previous run's result and your clicks. It sorts everything into four lists:
 
 | List | On the page | What goes in |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ Click a bar to open it:
 | `~/metanav/logs/` | Each run's log, kept 7 days. `result` is the run's own summary. |
 | `~/metanav/state.json` | Your clicks. |
 | `~/Library/Caches/metanav/` | Meta-Nav's own Chrome profile, with your Microsoft sign-in. |
-| `~/.claude/skills/metanav/` | The skill: `SKILL.md` (the AI's instructions), `config.json`, and the scripts. |
+| `~/.agents/skills/metanav/` | The skill: `SKILL.md` (the AI's instructions), `config.json`, and the scripts. |
 
 ## 8. When something looks off
 

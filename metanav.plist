@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>__HOME__/.claude/skills/metanav/run.sh</string>
+    <string>__HOME__/.agents/skills/metanav/run.sh</string>
   </array>
   <!-- on the hour, every hour; run.sh itself keeps to weekdays within config.hours -->
   <key>StartCalendarInterval</key>

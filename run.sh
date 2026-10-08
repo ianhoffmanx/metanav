@@ -32,16 +32,13 @@ trap 'rmdir "$OUT/.running"' EXIT
 # Show "Syncing…" on the open panel until this run rewrites it
 python3 "$SKILL/render.py" --syncing
 
-# The run collects with collect.mjs (a headless Chrome of its own, so no window pops up) and only judges,
-# so it needs no browser tools: --strict-mcp-config with no config loads no MCP server.
+# The run collects with collect.mjs (a headless Chrome of its own, so no window pops up) and only judges.
 # "unattended": nobody reads this run while it works, so it must never stop to ask (SKILL.md).
-# The model that judges is a setting: config.json "judge_model" (opus; sonnet is faster but follows the rules less reliably).
-MODEL=$(jq -r '.judge_model // "sonnet"' "$SKILL/config.json")
-claude -p "/$NAME unattended" --model "$MODEL" \
-  --strict-mcp-config \
-  --permission-mode auto \
-  --allowedTools "Skill" "Read" "Write" \
-  --output-format json \
+# The model that judges is a setting: config.json "judge_model" (gpt-6-luna by default).
+MODEL=$(jq -r '.judge_model // "gpt-6-luna"' "$SKILL/config.json")
+METANAV_SKILL_DIR="$SKILL" codex exec --model "$MODEL" --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json \
+  --cd "$OUT" \
+  "Read the Meta-Nav instructions at $SKILL/SKILL.md and follow them for this unattended run." \
   > "logs/$(date +%Y%m%d-%H%M).json" 2>&1
 
 # A run that failed never re-rendered: take the "syncing" flag back off. The panel then

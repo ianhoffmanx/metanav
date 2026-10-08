@@ -2,13 +2,13 @@
 
 This is the Windows twin of `INSTALL.md` (macOS). The skill is the same. Only the scheduling differs: Task Scheduler replaces `launchd`, and `windows/run.ps1` replaces `run.sh`.
 
-Claude: you're reading this because the user asked you to install Meta-Nav on Windows. Work through these steps in order. Confirm each one before you move on. Stop and tell the user if anything fails. Below, `<SKILL>` is `~/.claude/skills/metanav` and `<OUT>` is the expanded `output_dir` from `config.json` (`~/metanav` → `C:\Users\<name>\metanav`).
+Codex: you're reading this because the user asked you to install Meta-Nav on Windows. Work through these steps in order. Confirm each one before you move on. Stop and tell the user if anything fails. Below, `<SKILL>` is `~/.agents/skills/metanav` and `<OUT>` is the expanded `output_dir` from `config.json` (`~/metanav` → `C:\Users\<name>\metanav`).
 
-1. **Get the files.** If `<SKILL>` doesn't exist yet, clone the repo the user gave you into it: `git clone <url> ~/.claude/skills/metanav`. The folder must be named exactly `metanav`. If it already exists and isn't this repo, stop and ask. Read `README.md`, `HOW-IT-WORKS.md` and `SKILL.md`.
+1. **Get the files.** If `<SKILL>` doesn't exist yet, clone the repo the user gave you into it: `git clone <url> ~/.agents/skills/metanav`. The folder must be named exactly `metanav`. If it already exists and isn't this repo, stop and ask. Read `README.md`, `HOW-IT-WORKS.md` and `SKILL.md`.
 
 2. **Check prerequisites.** `windows\install.ps1` (step 5) checks all of these and lists what is missing, so you can run it early to find out. They are:
    - Windows 10 or 11 with PowerShell.
-   - `node` 18+, `npm`, `jq`, Python 3 (the real one: not the Microsoft Store stub), `gh`, `claude`, Google Chrome, and **Git for Windows** (`fetch.sh` runs in Git Bash; Claude Code needs it on Windows anyway). `winget` installs each: `OpenJS.NodeJS.LTS`, `jqlang.jq`, `Python.Python.3.12`, `GitHub.cli`, `Git.Git`, `Google.Chrome`.
+   - `node` 18+, `npm`, `jq`, Python 3 (the real one: not the Microsoft Store stub), `gh`, `codex`, Google Chrome, and **Git for Windows** (`fetch.sh` runs in Git Bash). `winget` installs the dependencies that have packages: `OpenJS.NodeJS.LTS`, `jqlang.jq`, `Python.Python.3.12`, `GitHub.cli`, `Git.Git`, `Google.Chrome`.
    - `gh auth status` succeeds and its scopes include `read:project`. If not, the user runs `gh auth refresh -h github.com -s read:project` themselves: it's interactive.
    - Nothing else listens on port 47615.
 
@@ -47,4 +47,4 @@ Claude: you're reading this because the user asked you to install Meta-Nav on Wi
 powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Uninstall
 ```
 
-It removes both tasks and the profile line. Then delete `~\.claude\skills\metanav`, `~\metanav` and `%LOCALAPPDATA%\metanav`.
+It removes both tasks and the profile line. Then delete `~\.agents\skills\metanav`, `~\metanav` and `%LOCALAPPDATA%\metanav`.

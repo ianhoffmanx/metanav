@@ -17,13 +17,13 @@ Only what reaches the user through their own mail, chats, GitHub and Azure DevOp
 
 | File | Role |
 | --- | --- |
-| `config.json` | Who the user is (`user.name`, `user.short_name` — how they appear in chats), the `projects` they care about, an optional `schedule` (which project they're on each weekday), the GitHub org, mail folders, bot chats and calendar blocks to skip, working hours, output dir, `lookback_days`, the optional Azure DevOps pipeline (`ado`), and `judge_model` — the model scheduled runs judge with (`opus`; `sonnet` is about twice as fast but copies carried-over items word for word instead of re-judging them). |
+| `config.json` | Who the user is (`user.name`, `user.short_name` — how they appear in chats), the `projects` they care about, an optional `schedule` (which project they're on each weekday), the GitHub org, mail folders, bot chats and calendar blocks to skip, working hours, output dir, `lookback_days`, the optional Azure DevOps pipeline (`ado`), and `judge_model` — the model scheduled runs judge with (`gpt-6-luna` by default). |
 | `collect.mjs` | Reads Outlook and Teams (headless Chrome, on the runs' own signed-in profile) and GitHub / Azure DevOps (`fetch.sh`, alongside) into one `inputs.json` — no model in the loop. Needs `npm install` here once (`playwright-core`). |
 | `fetch.sh` | GitHub + Azure DevOps → JSON. Deterministic, no judgement. |
 | `teams-extract.js` | Reads Teams messages from Teams' own local cache. |
 | `template.html` | The panel (Persona 5 style). Renders whatever `brief.json` holds; checks `stamp.js` every minute and reloads only when a run has written something new. |
 | `render.py` | Flags items new / updated against the previous run, sends a desktop notification (macOS or Windows) for new high-urgency items, writes the panel (plus `stamp.js`, which the open page polls) and the run history. `--syncing` / `--idle` repaint the last result with or without the "Syncing" state. |
-| `run.sh` | The scheduled entry point: hours guard, lock, `claude -p "/metanav unattended"` from the output dir with the model from `config.json`, "Syncing" on/off, private-dump cleanup. |
+| `run.sh` | The scheduled entry point: hours guard, lock, `codex exec` in the output directory with the model from `config.json`, "Syncing" on/off, private-dump cleanup. |
 | `state.py` | The panel's click store: a small service on 127.0.0.1 that writes the user's done / resolved / Got it clicks to `<output dir>/state.json` — a page opened from disk can't write files. Every browser shares it, and each run reads it (step 5). Without it the page keeps clicks in the browser. It also runs the panel's SYNC NOW button (a run now, whatever the hour) and the banner's SIGN IN button: `az login` for Azure DevOps, or a visible window on the runs' own browser profile for Outlook and Teams (it closes once both have loaded), then a refresh. So a failed source's `note` should say "sign-in needed" when that's the cause — the button shows only then. |
 | `metanav.plist` / `metanav-state.plist` | launchd jobs (`local.metanav`, `local.metanav-state`): `run.sh` on the hour, and `state.py` from login. `INSTALL.md` sets them up. |
 
@@ -31,7 +31,7 @@ Output lives in the output dir (`config.output_dir`, `~/metanav`): `index.html` 
 
 Scripts collect; **your job is judgement: decide what the user should do, in what order, and why.** Do not edit `template.html` to change content — change the data.
 
-**Unattended runs.** `run.sh` starts every scheduled run, and `metanav` from the terminal, as `/metanav unattended`. Nobody reads such a run while it works: never ask a question or wait for an answer — decide, finish and render, and put anything the user must do in `sources` (the panel shows it).
+**Unattended runs.** `run.sh` starts every scheduled run, and `metanav` from the terminal, with this file as the run instructions. Nobody reads such a run while it works: never ask a question or wait for an answer — decide, finish and render, and put anything the user must do in `sources` (the panel shows it).
 
 ---
 
@@ -40,7 +40,7 @@ Scripts collect; **your job is judgement: decide what the user should do, in wha
 One Bash call: the window, then `collect.mjs`, which reads everything at once — Outlook and Teams in a headless Chrome, GitHub and Azure DevOps (`fetch.sh`) alongside — and writes one file. About 25 seconds; it prints one line of counts, and whether a source failed or needs a sign-in.
 
 ```bash
-CFG="${CLAUDE_SKILL_DIR}/config.json"
+CFG="${METANAV_SKILL_DIR}/config.json"
 OUT=$(jq -r '.output_dir // "~/metanav"' "$CFG" | tr -d '\r'); OUT="${OUT/#\~/$HOME}"
 LAST=$(cat "$OUT/.last-run" 2>/dev/null)
 PREV=$(find "$OUT/runs" -name '*.json' 2>/dev/null | sort | tail -1)
@@ -52,7 +52,7 @@ SINCE=${LAST:-$LOOKBACK}
 FIRST=$([[ -n "$PREV" ]] && echo no || echo yes)
 SCRATCH=$(mktemp -d)   # brief.json for this run
 mkdir -p "$OUT/.inputs"
-node "${CLAUDE_SKILL_DIR}/collect.mjs" "$SINCE" "$LOOKBACK" "$FIRST" "$PREV" "$OUT/.inputs/inputs.json"
+node "${METANAV_SKILL_DIR}/collect.mjs" "$SINCE" "$LOOKBACK" "$FIRST" "$PREV" "$OUT/.inputs/inputs.json"
 # which project the user is on today, when config.schedule says (none at the weekend, or without a schedule)
 TODAY_PROJECT=$(jq -r --arg d "$(date +%a)" '.schedule[$d] // "none"' "$CFG")
 echo "OUT=$OUT SINCE=$SINCE LOOKBACK=$LOOKBACK FIRST=$FIRST PREV=$PREV SCRATCH=$SCRATCH TODAY_PROJECT=$TODAY_PROJECT"
@@ -60,7 +60,7 @@ echo "OUT=$OUT SINCE=$SINCE LOOKBACK=$LOOKBACK FIRST=$FIRST PREV=$PREV SCRATCH=$
 
 Bash calls don't share variables: later steps use the values this one printed.
 For a full rescan (the user asks for one), set `FIRST=yes` and `SINCE=$LOOKBACK` before the collector line.
-Then read, in one message: `<OUT>/.inputs/inputs.json`, `PREV`, `<OUT>/state.json` (step 5) and `${CLAUDE_SKILL_DIR}/config.json` (who the user is, their projects, what to skip). Don't query Outlook, Teams or GitHub yourself — the inputs have it all, and re-reading costs a minute.
+Then read, in one message: `<OUT>/.inputs/inputs.json`, `PREV`, `<OUT>/state.json` (step 5) and `${METANAV_SKILL_DIR}/config.json` (who the user is, their projects, what to skip). Don't query Outlook, Teams or GitHub yourself — the inputs have it all, and re-reading costs a minute.
 
 - **Incremental run** (`PREV` exists): its `queue`, `waiting`, `highlights` and `done` are the starting point. However long ago the last run was — a weekend, a week off — carry on from it: 5a re-checks every item it carried over anyway, so an old baseline is still a good one. The window just gets longer (never past `LOOKBACK`), and the collector reads each list back to `SINCE`.
 - **First run** (no `PREV`, or a full rescan): build everything from scratch over the whole lookback (`config.lookback_days`, 30 days) — new mail and messages as well as open loops, so an ask nobody answered three weeks ago still surfaces.
@@ -260,7 +260,7 @@ Don't set `new` or `updated` — `render.py` computes both against the previous 
 
 ```bash
 PY=$(command -v python3 || command -v python)   # Windows installs often have only `python`
-"$PY" "${CLAUDE_SKILL_DIR}/render.py" "<SCRATCH>/brief.json" "<OUT>/.inputs/inputs.json"
+"$PY" "${METANAV_SKILL_DIR}/render.py" "<SCRATCH>/brief.json" "<OUT>/.inputs/inputs.json"
 ```
 
 `render.py` takes `work` and `review_requests` from the inputs. On an unattended run that's the last step: `run.sh` deletes `<OUT>/.inputs/` (private mail and chats). When the user runs `/metanav` from a session, delete it yourself: `rm -f "<OUT>/.inputs/inputs.json"`.

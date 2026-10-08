@@ -44,7 +44,7 @@ if (Has gh) {
         Need ((gh auth status 2>&1 | Out-String) -match 'read:project') 'gh token lacks read:project (you run this, it is interactive): gh auth refresh -h github.com -s read:project'
     }
 }
-Need (Has claude) 'Claude Code: https://claude.com/claude-code'
+Need (Has codex) 'Codex CLI: https://developers.openai.com/codex/cli'
 $python = @('python3', 'python') | Where-Object { $c = Get-Command $_ -ErrorAction SilentlyContinue; $c -and $c.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
 Need ([bool]$python) 'Python 3 (not the Microsoft Store stub): winget install Python.Python.3.12'
 $gitBash = @($env:CLAUDE_CODE_GIT_BASH_PATH) + @('ProgramFiles', 'ProgramFiles(x86)', 'LocalAppData' | ForEach-Object { Join-Path ([Environment]::GetEnvironmentVariable($_)) 'Git\bin\bash.exe' }) |
