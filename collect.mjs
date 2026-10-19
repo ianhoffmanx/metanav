@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import { PROFILE, SKILL as HERE, config, graphql, chromePath } from './common.mjs';
 import { adoStates } from './ado.mjs';
 import { fetchAll } from './fetch.mjs';
+import { withDeadline } from './deadline.mjs';
+import { marketingPrevious, inGithubScope } from './marketing.mjs';
 import { openApp, pageForApp, signedIn as sessionSignedIn, connectMicrosoftBrowser } from './microsoft.mjs';
 
 const [SINCE, LOOKBACK, FIRST, PREV, OUT] = process.argv.slice(2);
@@ -19,7 +21,15 @@ const BOTS = config.teams?.skip_chats ?? [];   // bot and reminder chats: not pe
 
 const t0 = Date.now();
 const timings = {};
-const timed = async (name, fn) => { const s = Date.now(); try { return await fn(); } finally { timings[name] = +((Date.now() - s) / 1000).toFixed(1); } };
+const timed = async (name, fn) => {
+  const s = Date.now();
+  writeFileSync(join(OUT, '..', '..', 'collector-stage.json'), JSON.stringify({stage:name,at:new Date().toISOString()}));
+  try {
+    const ms = name.startsWith('Outlook ') ? 90000 : name === 'Teams cache' ? 50000 : name === 'browser attach' ? 65000 : name.startsWith('Teams ') ? 60000 : 0;
+    return ms ? await withDeadline(fn(), ms, name) : await fn();
+  }
+  finally { timings[name] = +((Date.now() - s) / 1000).toFixed(1); }
+};
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // A list draws about one screen of rows, newest first: read on, scrolling, until past SINCE (an hourly run doesn't scroll)
@@ -101,10 +111,11 @@ async function meetingTimes(page, ids) {
 
 async function readFolder(page, url) {
   if (!await open(page, url)) return null;
-  await page.waitForSelector('[role=listbox] [role=option]', { timeout: 15000 }).catch(() => {});   // an empty folder has none
+  await page.waitForSelector('[role=listbox]', { timeout: 15000 }).catch(() => {});   // an empty folder still has a listbox
   // Outlook draws its own page first and only then goes to the sign-in page when the session has passed the
   // organisation's sign-in age - so look again once the list has had its chance, or that reads as an empty folder
   if (!await signedIn(page)) return null;
+  await page.waitForSelector('[role=listbox]', { timeout: 15000 }).catch(() => {});
   if (!await page.locator('[role=listbox]').count()) throw new Error('Outlook mail list did not load; capture is incomplete');
   await sleep(800);
   const rows = await evaluateStable(page, ROWS(SINCE));
@@ -194,7 +205,8 @@ async function teams(page) {
   const extract = readFileSync(join(HERE, 'teams-extract.js'), 'utf8')
     .replace('__SINCE__', SINCE).replace('__ACTIVE_SINCE__', FIRST === 'yes' ? LOOKBACK : SINCE).replace('__LOOKBACK__', LOOKBACK);
   const data = await timed('Teams extract', () => page.evaluate(`(${extract})()`));
-  return { signin_needed: false, conversations: data.conversations.filter(c => !BOTS.includes(c.name)) };
+  if (!data || !Array.isArray(data.conversations)) throw new Error('Teams cache did not load; collection is incomplete');
+  return { signin_needed: false, conversations: data.conversations.filter(c => !BOTS.includes(c.name) || (config.marketing && c.messages.some(m => /fail(?:ed|ure)?|error|expired|timed out|stopped|not running/i.test(m.text)))) };
 }
 
 // Current state of every PR the inputs point at - carried-over items, links in chats and mail - so the run
@@ -203,7 +215,7 @@ async function prStates(prev, mail, teamsData, github) {
   const known = new Set([...(github.review_requests || []), ...(github.work || []).flatMap(w => [w, ...(w.prs || [])])].map(p => p.url));
   const text = JSON.stringify([prev.urls, Object.values(mail.folders || {}).flat().map(r => r.label),
     (teamsData.conversations || []).flatMap(c => c.messages.map(m => m.text))]);
-  const urls = [...new Set(text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g) || [])].filter(u => !known.has(u)).slice(0, 40);
+  const urls = [...new Set(text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g) || [])].filter(u => !known.has(u) && inGithubScope(u, config.marketing?.github)).slice(0, 40);
   if (!urls.length) return {};
   const parts = urls.map((u, i) => {
     const [, owner, repo, n] = u.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/);
@@ -222,7 +234,7 @@ async function prStates(prev, mail, teamsData, github) {
 async function issueStates(prev, github) {
   const known = new Set([...(github.work || []).map(w => w.url), ...(github.mentions || []).map(m => m.url)]);
   const urls = [...new Set(JSON.stringify(prev.urls).match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+/g) || [])]
-    .filter(u => !known.has(u)).slice(0, 30);
+    .filter(u => !known.has(u) && inGithubScope(u, config.marketing?.github)).slice(0, 30);
   if (!urls.length) return {};
   const parts = urls.map((u, i) => {
     const [, owner, repo, n] = u.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)/);
@@ -243,7 +255,7 @@ async function issueStates(prev, github) {
 function fromPrev(file) {
   if (!file) return { mail_ids: [], urls: [] };
   try {
-    const p = JSON.parse(readFileSync(file, 'utf8'));
+    const p = marketingPrevious(JSON.parse(readFileSync(file, 'utf8')), config.marketing?.github);
     const items = ['queue', 'waiting', 'highlights'].flatMap(s => p[s] || []);
     return {
       // received mail only: Sent loops don't close by deletion (JUDGE.md, 3a)
@@ -260,18 +272,18 @@ const fetching = timed('GitHub + Azure DevOps', () => fetchAll(SINCE, LOOKBACK)
 const out = { collected_at: new Date().toISOString(), since: SINCE, lookback: LOOKBACK, first_run: FIRST === 'yes' };
 let context, browser, attached = false;
 try {
-  ({ browser, context } = await timed('browser attach', () => connectMicrosoftBrowser(chromium, PROFILE, chromePath(), config.microsoft_account)));
+  ({ browser, context } = await timed('browser attach', () => connectMicrosoftBrowser(chromium, PROFILE, chromePath(), config.microsoft_account, config.browser || {})));
   attached = true;
-  const page = await pageForApp(context, 'outlook');
-  out.mail = await outlook(page, prev).catch(e => ({ error: String(e.message || e).slice(0, 200) }));
-  const teamsPage = await pageForApp(context, 'teams');
-  out.teams = await teams(teamsPage).catch(e => ({ error: String(e.message || e).slice(0, 200) }));
+  const page = await timed('Outlook tab', () => pageForApp(context, 'outlook'));
+  out.mail = await withDeadline(outlook(page, prev), 195000, 'Outlook collection').catch(e => ({ error: String(e.message || e).slice(0, 200) }));
+  const teamsPage = await timed('Teams tab', () => pageForApp(context, 'teams'));
+  out.teams = await withDeadline(teams(teamsPage), 70000, 'Teams collection').catch(e => ({ error: String(e.message || e).slice(0, 200) }));
   // Sign-in is explicit through the service; collection never launches repeated login windows.
 } catch (e) {
   out.mail = out.mail || { error: String(e.message || e).slice(0, 200) };
   out.teams = out.teams || { error: String(e.message || e).slice(0, 200) };
 } finally {
-  if (attached) await browser?.close().catch(() => {});   // disconnect; leave the signed-in Chrome profile alive
+  if (attached) await withDeadline(browser?.close(), 5000, 'browser disconnect').catch(() => {});   // disconnect; leave the signed-in Chrome profile alive
   else await context?.close().catch(() => {});
 }
 const fetched = await fetching;
@@ -283,7 +295,7 @@ out.issue_states = await timed('issue states', () => issueStates(prev, out.githu
 if (out.ado?.ok && !out.ado.skipped) {
   const known = new Set([...(out.ado.work || []).flatMap(w => [w, ...(w.prs || [])]), ...(out.ado.review_requests || []), ...(out.ado.mentions || [])].map(x => x.url));
   const urls = [...new Set(JSON.stringify(prev.urls).match(/https:\/\/dev\.azure\.com\/[^"\s?#]+\/(?:_workitems\/edit|pullrequest)\/\d+/g) || [])]
-    .filter(u => !known.has(u)).slice(0, 30);
+    .filter(u => !known.has(u) && inGithubScope(u, config.marketing?.github)).slice(0, 30);
   out.ado_states = urls.length ? await timed('ADO states', () => adoStates(urls)) : {};
 }
 timings.total = +((Date.now() - t0) / 1000).toFixed(1);
@@ -293,7 +305,7 @@ writeFileSync(OUT, JSON.stringify(out));
 // one short line for the run: what came in, and whether anything failed
 const mailRows = Object.values(out.mail.folders || {}).reduce((n, r) => n + r.length, 0);
 console.log(JSON.stringify({
-  seconds: timings.total, mail_rows: mailRows, calendar: out.mail.calendar?.length ?? 0, teams_conversations: out.teams.conversations?.length ?? 0,
+  browser_mode: config.browser?.headless ? 'headless' : 'visible', seconds: timings.total, mail_rows: mailRows, calendar: out.mail.calendar?.length ?? 0, teams_conversations: out.teams.conversations?.length ?? 0,
   pr_states: Object.keys(out.pr_states || {}).length, issue_states: Object.keys(out.issue_states || {}).length, github_ok: !!out.github?.ok, ado_ok: !!out.ado?.ok,
   ado_work: out.ado?.work?.length ?? 0, ado_reviews: out.ado?.review_requests?.length ?? 0, ado_mentions: out.ado?.mentions?.length ?? 0,
   outlook_folders: Object.fromEntries(Object.entries(out.mail.folders || {}).map(([name, rows]) => [name, rows.length])),
@@ -304,3 +316,7 @@ console.log(JSON.stringify({
   outlook_signin_needed: !!out.mail.signin_needed, teams_signin_needed: !!out.teams.signin_needed,
   errors: [out.mail.error && `Outlook: ${out.mail.error}`, out.teams.error && `Teams: ${out.teams.error}`].filter(Boolean),
 }));
+
+// If a library keeps the collector alive after its output is complete, preserve evidence.
+const idle = setTimeout(() => console.error(JSON.stringify({collector_after_summary:process.getActiveResourcesInfo(), handles:process._getActiveHandles().map(h=>({type:h.constructor.name,pid:h.pid,port:h.remotePort,referenced:h.hasRef?.()}))})), 1000);
+idle.unref();

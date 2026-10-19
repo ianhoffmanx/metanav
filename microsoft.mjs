@@ -3,6 +3,8 @@
 import { readFileSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
+import { recoverTargets } from './cdp.mjs';
+import { browserArgs } from './browser-args.mjs';
 
 const HOSTS = {
   outlook: ['outlook.office.com', 'outlook.office365.com', 'outlook.cloud.microsoft', 'outlook.cloud.microsoft.mcas.ms'],
@@ -43,23 +45,33 @@ export function devtoolsEndpoint(profile) {
     return /^\d+$/.test(port) ? `http://127.0.0.1:${port}` : '';
   } catch { return ''; }
 }
-export async function connectMicrosoftBrowser(chromium, profile, executable, account = '') {
+export async function connectMicrosoftBrowser(chromium, profile, executable, account = '', options = {}) {
   savedAccount = account;
   let endpoint = devtoolsEndpoint(profile);
   if (endpoint) {
-    try {
-      const browser = await chromium.connectOverCDP(endpoint, { timeout: 3000 });
-      return { browser, context: browser.contexts()[0] };
-    } catch {}
+    // Check browser availability separately: an attach timeout is not evidence
+    // that Chrome is absent, and launching a second owner cannot repair it.
+    let live = false;
+    try { live = (await fetch(endpoint + '/json/version', { signal: AbortSignal.timeout(3000) })).ok; } catch {}
+    if (live) {
+      const recovered = await recoverTargets(endpoint, { application: appOf });
+      if (recovered.length) console.error(JSON.stringify({ browser_recovered_tabs: recovered.length }));
+      try {
+        const browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 });
+        return { browser, context: browser.contexts()[0] };
+      } catch {
+        throw new Error('Meta-Nav Chrome is open but not responding. Close its dedicated window and click SIGN IN.');
+      }
+    }
   }
   if (!executable) throw new Error('Google Chrome was not found');
   mkdirSync(profile, { recursive: true });
   // Use regular Chrome for Conditional Access, even when no sign-in window is
   // already open. Automation's headless launch can invalidate an otherwise valid session.
   let launchError;
-  const child = spawn(executable, [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
-    'https://outlook.office.com/mail/inbox', 'https://teams.microsoft.com/v2/'], { detached: true, stdio: 'ignore' });
+  const child = spawn(executable, browserArgs(profile, options), { detached: true, stdio: 'ignore' });
   child.on('error', error => { launchError = error; });
+  child.once('exit', code => { launchError ??= new Error(`Meta-Nav Chrome exited during startup (code ${code}).`); });
   child.unref();
   const deadline = Date.now() + 30000;
   do {
@@ -118,7 +130,9 @@ export async function openApp(page, target) {
 }
 export function recognizedApps(pages) {
   return {
-    outlook: pages.some(p => appOf(p.url) === 'outlook' && /Outlook/i.test(p.title || '') && !/sign in/i.test(p.title || '')),
+    // A signed-in mailbox title has more than the product name ("Inbox | Ian | Outlook"); the bare "Outlook" title is the
+    // loading page and the "Something went wrong" (401) page, which are not signed in.
+    outlook: pages.some(p => appOf(p.url) === 'outlook' && /\S\s*[-|]\s*Outlook$/i.test((p.title || '').trim()) && !/sign in/i.test(p.title || '')),
     teams: pages.some(p => appOf(p.url) === 'teams' && /\| Microsoft Teams$/.test(p.title || '')),
   };
 }

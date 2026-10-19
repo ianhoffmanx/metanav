@@ -1,1 +1,365 @@
-{"type":"object","properties":{"brief":{"type":"object","properties":{"date":{"type":"string"},"generated_at":{"type":"string"},"interval_min":{"type":"integer"},"since":{"type":"string"},"headline":{"type":"string"},"tradeoffs":{"type":"array","items":{"type":"string"}},"queue":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"source":{"type":"string"},"title":{"type":"string"},"why":{"type":"string"},"reason":{"type":"string"},"who":{"type":"array","items":{"type":"string"}},"urgency":{"type":"string","enum":["high","normal"]},"effort":{"type":"string","enum":["A","B","C","D"]},"due":{"type":["string","null"]},"cost":{"type":"string"},"url":{"type":"string"},"actions":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"url":{"type":"string"}},"required":["label","url"],"additionalProperties":false}},"since":{"type":"string"},"last_activity":{"type":"string"}},"required":["id","source","title","why","reason","who","urgency","effort","due","cost","url","actions","since","last_activity"],"additionalProperties":false}},"waiting":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"source":{"type":"string"},"who":{"type":"array","items":{"type":"string"}},"what":{"type":"string"},"quote":{"type":"string"},"nudge":{"type":"string"},"reply_url":{"type":"string"},"thread":{"type":"array","items":{"type":"object","properties":{"from":{"type":"string"},"text":{"type":"string"},"at":{"type":"string"},"via":{"type":["string","null"]}},"required":["from","text","at","via"],"additionalProperties":false}},"not_waiting":{"type":"array","items":{"type":"string"}},"nudge_now":{"type":"boolean"},"why":{"type":["string","null"]},"since":{"type":"string"},"last_activity":{"type":"string"},"url":{"type":"string"}},"required":["id","source","who","what","quote","nudge","reply_url","thread","not_waiting","nudge_now","why","since","last_activity","url"],"additionalProperties":false}},"calendar":{"type":"array","items":{"type":"object","properties":{"start":{"type":"string"},"end":{"type":"string"},"title":{"type":"string"},"all_day":{"type":"boolean"}},"required":["start","end","title","all_day"],"additionalProperties":false}},"highlights":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"source":{"type":"string"},"where":{"type":"string"},"title":{"type":"string"},"detail":{"type":"string"},"url":{"type":"string"},"at":{"type":"string"}},"required":["id","source","where","title","detail","url","at"],"additionalProperties":false}},"done":{"type":"array","items":{"type":"object","properties":{"what":{"type":"string"},"when":{"type":"string"},"url":{"type":"string"},"at":{"type":"string"},"id":{"type":["string","null"]},"effort":{"type":["string","null"]}},"required":["what","when","url","at","id","effort"],"additionalProperties":false}}},"required":["date","generated_at","interval_min","since","headline","tradeoffs","queue","waiting","calendar","highlights","done"],"additionalProperties":false},"summary":{"type":"string"}},"required":["brief","summary"],"additionalProperties":false}
+{
+  "type": "object",
+  "properties": {
+    "brief": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "interval_min": {
+          "type": "integer"
+        },
+        "since": {
+          "type": "string"
+        },
+        "headline": {
+          "type": "string"
+        },
+        "tradeoffs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "queue": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "description": "Plain-language action and deliverable. Marketing uses content review, approval, prep and follow-up, not code review jargon."
+              },
+              "why": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "who": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "People who asked Ian or are waiting on his work; evidenced names only, [] if unknown."
+              },
+              "urgency": {
+                "type": "string",
+                "enum": [
+                  "high",
+                  "normal"
+                ]
+              },
+              "effort": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ]
+              },
+              "due": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "An evidenced deadline or supplied sprint end, or null. Never infer from email arrival or PR age."
+              },
+              "cost": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "url"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "since": {
+                "type": "string"
+              },
+              "last_activity": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "source",
+              "title",
+              "why",
+              "reason",
+              "who",
+              "urgency",
+              "effort",
+              "due",
+              "cost",
+              "url",
+              "actions",
+              "since",
+              "last_activity"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "waiting": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "who": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "what": {
+                "type": "string"
+              },
+              "quote": {
+                "type": "string"
+              },
+              "nudge": {
+                "type": "string"
+              },
+              "reply_url": {
+                "type": "string"
+              },
+              "thread": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "via": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "text",
+                    "at",
+                    "via"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "not_waiting": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "nudge_now": {
+                "type": "boolean"
+              },
+              "why": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "since": {
+                "type": "string"
+              },
+              "last_activity": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "source",
+              "who",
+              "what",
+              "quote",
+              "nudge",
+              "reply_url",
+              "thread",
+              "not_waiting",
+              "nudge_now",
+              "why",
+              "since",
+              "last_activity",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "calendar": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string"
+              },
+              "end": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "all_day": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "title",
+              "all_day"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "highlights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "where": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "source",
+              "where",
+              "title",
+              "detail",
+              "url",
+              "at"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "done": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "what": {
+                "type": "string"
+              },
+              "when": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "effort": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "what",
+              "when",
+              "url",
+              "at",
+              "id",
+              "effort"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "date",
+        "generated_at",
+        "interval_min",
+        "since",
+        "headline",
+        "tradeoffs",
+        "queue",
+        "waiting",
+        "calendar",
+        "highlights",
+        "done"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "brief",
+    "summary"
+  ],
+  "additionalProperties": false
+}

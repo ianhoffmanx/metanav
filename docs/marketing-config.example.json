@@ -1,0 +1,19 @@
+{
+  "agent": "codex",
+  "judge_model": "gpt-6-luna",
+  "ado": {
+    "base_url": "https://dev.azure.com/ssw/SSW.Marketing",
+    "team": "SSW.Marketing Team",
+    "project_only": true,
+    "current_iteration_only": true,
+    "read_prs": false
+  },
+  "marketing": {
+    "role": "Marketing Coordinator",
+    "github": {
+      "orgs": ["tinacms", "SSWConsulting"],
+      "content_repos": ["tinacms/tina.io", "SSWConsulting/SSW.Products", "SSWConsulting/SSW.Website", "SSWConsulting/SSW.Rules.Content"],
+      "exclude_repos": ["koreanpatch", "polysemylabs", "VictorCazanave/svg-maps"]
+    }
+  }
+}

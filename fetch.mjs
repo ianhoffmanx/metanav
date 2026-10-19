@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fromAdo } from './ado.mjs';
 import { config, github, graphql } from './common.mjs';
+import { marketingGithub, inGithubScope } from './marketing.mjs';
 
 const pad = n => String(n).padStart(2, '0');
 const localDay = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -21,11 +22,11 @@ async function fromGithub(SINCE) {
   const q = s => JSON.stringify(`${s} ${orgs} archived:false`);
   const d = await graphql(`{ me: viewer { login }
   review: search(query: ${q('is:pr is:open review-requested:@me')}, type: ISSUE, first: 30) { nodes { ... on PullRequest {
-    number title url createdAt isDraft author { login } repository { name } additions deletions changedFiles
+    number title url createdAt isDraft author { login } repository { name } additions deletions changedFiles files(first: 100) { nodes { path } }
     reviewRequests(first: 100) { nodes { requestedReviewer { ... on User { login } } } }
     reviews(last: 30) { nodes { author { login } submittedAt } } } } }
   mine: search(query: ${q('is:pr is:open author:@me')}, type: ISSUE, first: 30) { nodes { ... on PullRequest {
-    number title url createdAt isDraft reviewDecision repository { name } headRefName body additions deletions changedFiles
+    number title url createdAt isDraft reviewDecision repository { name } headRefName body additions deletions changedFiles files(first: 100) { nodes { path } }
     closingIssuesReferences(first: 1) { nodes { number repository { name } } }
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     comments(last: 30) { nodes { url author { __typename login } createdAt } }
@@ -53,6 +54,7 @@ async function fromGithub(SINCE) {
     const keyword = (p.body || '').match(/^\s*(?:part of|fixes|fixed|closes|closed|resolves|resolved) #(\d{2,6})/im);
     return {
       repo: p.repository.name, number: p.number, title: clean(p.title), url: p.url, draft: p.isDraft, since: p.createdAt,
+      files: p.files?.nodes || [],
       size: { files: p.changedFiles, added: p.additions, removed: p.deletions },
       review: p.reviewDecision || 'PENDING',
       ci: nodes(p.commits)[0]?.commit?.statusCheckRollup?.state || 'NONE',
@@ -92,6 +94,7 @@ async function fromGithub(SINCE) {
     return {
       repo: p.repository.name, number: p.number, title: clean(p.title), url: p.url, author: p.author?.login,
       draft: p.isDraft, rereview: mine != null,
+      files: p.files?.nodes || [],
       size: { files: p.changedFiles, added: p.additions, removed: p.deletions },   // what a review of it takes
       since, waiting_days: daysSince(since),
     };
@@ -109,7 +112,7 @@ async function fromGithub(SINCE) {
   let mentions = [];
   try {
     const notes = await github(`/notifications?participating=true&all=true&since=${encodeURIComponent(SINCE)}&per_page=50`);
-    mentions = await Promise.all(notes.filter(n => n.reason === 'mention' || n.reason === 'team_mention').map(async n => {
+    mentions = await Promise.all(notes.filter(n => (n.reason === 'mention' || n.reason === 'team_mention') && inGithubScope(n.repository.html_url, config.marketing?.github)).map(async n => {
       const m = { reason: n.reason, unread: n.unread, updated: n.updated_at, repo: n.repository.full_name, type: n.subject.type, title: n.subject.title,
         url: (n.subject.url || '').replace('api.github.com/repos', 'github.com').replace('/pulls/', '/pull/') };
       const api = (n.subject.url || '').replace('/pulls/', '/issues/');   // a PR is an issue too, for its body and comments
@@ -122,7 +125,7 @@ async function fromGithub(SINCE) {
     }));
   } catch { /* mentions are extra: a failure here leaves the rest of GitHub standing */ }
 
-  return { ok: true, review_requests, work, mentions };
+  return marketingGithub({ ok: true, review_requests, work, mentions }, config.marketing?.github);
 }
 
 export async function fetchAll(SINCE, LOOKBACK) {

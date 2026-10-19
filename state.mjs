@@ -15,6 +15,8 @@ import { createServer } from 'node:http';
 import { appOf, devtoolsEndpoint, recognizedApps } from './microsoft.mjs';
 import { join } from 'node:path';
 import { OUT, PROFILE, SKILL, chromePath, tool } from './common.mjs';
+import { recoverTargets } from './cdp.mjs';
+import { freshSignin } from './health.mjs';
 
 const PORT = 47615;
 const KEYS = ['tower:dismissed', 'tower:read'];
@@ -36,9 +38,14 @@ function save(state) {
 }
 
 // A run. `manual`: one the user asked for (SYNC NOW, `metanav`, a sign-in that worked) - run.mjs skips the hours for it.
+let activeRun = null;
 function start(manual) {
+  if (activeRun || existsSync(join(OUT, '.running'))) return;
   if (manual) writeFileSync(join(OUT, '.manual'), '');
-  spawn(process.execPath, [join(SKILL, 'run.mjs')], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  activeRun = spawn(process.execPath, [join(SKILL, 'run.mjs')], { detached: true, stdio: 'ignore', windowsHide: true });
+  activeRun.once('error', () => { activeRun = null; });
+  activeRun.once('exit', () => { activeRun = null; });
+  activeRun.unref();
 }
 const refresh = () => start(true);
 
@@ -70,6 +77,7 @@ async function signInMicrosoft() {
   const report = (status, apps = {}) => write(join(OUT, 'signin-status.json'), JSON.stringify({ status, apps, at: new Date().toISOString() }));
   report('waiting', recognizedApps(pages));
   if (endpoint) {
+    await recoverTargets(endpoint, { application: appOf });
     // Reuse the live profile. Deleting its port file or trusting a second Chrome
     // launch's exit loses the browser that actually owns the signed-in session.
     for (const [app, url] of [['outlook', 'https://outlook.office.com/mail/inbox'], ['teams', 'https://teams.microsoft.com/v2/']]) {
@@ -91,7 +99,7 @@ async function signInMicrosoft() {
       pages = await (await fetch(endpoint + '/json', { signal: AbortSignal.timeout(3000) })).json();
       const apps = recognizedApps(pages);
       report('waiting', apps);
-      if (apps.outlook && apps.teams) { report('ready', apps); return true; }
+      if (apps.outlook && apps.teams) { report('checking', apps); return true; }
     } catch {}
   }
   report('timed_out', recognizedApps(pages));
@@ -145,11 +153,11 @@ const server = createServer((req, res) => {
     if (req.url === '/status') {
       let signin = null;
       try { signin = JSON.parse(readFileSync(join(OUT, 'signin-status.json'), 'utf8')); } catch {}
-      return reply(res, 200, { running: existsSync(join(OUT, '.running')), signing: [...signing], signin });
+      return reply(res, 200, { running: !!activeRun || existsSync(join(OUT, '.running')), signing: [...signing], signin: freshSignin(signin) });
     }
     if (req.url === '/refresh') {
       // one run at a time, and not while a sign-in window holds the browser profile
-      const busy = existsSync(join(OUT, '.running')) || signing.has('microsoft');
+      const busy = !!activeRun || existsSync(join(OUT, '.running')) || signing.has('microsoft');
       if (!busy) refresh();
       return reply(res, 200, { status: busy ? 'busy' : 'started' });
     }

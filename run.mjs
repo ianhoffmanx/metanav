@@ -13,6 +13,10 @@ import { CONFIG, OUT, SKILL, config, tool } from './common.mjs';
 import { renderBrief, repaint } from './render.mjs';
 import { captureSources, captureComplete } from './capture-status.mjs';
 import { judgePrompt, parseJudgeResult } from './judge-output.mjs';
+import { runSummary } from './run-summary.mjs';
+import { signinEvidence, missingSources, failureMessage } from './health.mjs';
+import { marketingPrevious } from './marketing.mjs';
+import { notify } from './notifications.mjs';
 
 const RESCAN = process.argv.includes('--rescan');
 const now = new Date();
@@ -37,6 +41,8 @@ if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs > 20 * 60e3) rmSync(
 try { mkdirSync(lock); } catch { process.exit(0); }
 process.on('exit', () => rmSync(lock, { recursive: true, force: true }));
 
+let log;
+try {
 repaint(true);   // "Syncing…" on the open panel until this run rewrites it
 
 // The window: from the last run (never further back than the lookback), or the whole lookback on a first run
@@ -55,10 +61,22 @@ mkdirSync(DIR, { recursive: true });
 const INPUTS = join(DIR, 'inputs.json'), BRIEF = join(DIR, 'brief.json');
 // Never let an interrupted run's files masquerade as this run's results.
 for (const file of [INPUTS, BRIEF, join(DIR, 'last-message.txt')]) rmSync(file, { force: true });
-const collect = spawnSync(process.execPath, [join(SKILL, 'collect.mjs'), SINCE, LOOKBACK, FIRST, PREV, INPUTS], { encoding: 'utf8', timeout: 5 * 60e3, windowsHide: true });
+process.on('exit', () => rmSync(DIR, { recursive: true, force: true }));
+const collect = spawnSync(process.execPath, [join(SKILL, 'collect.mjs'), SINCE, LOOKBACK, FIRST, PREV, INPUTS], { encoding: 'utf8', maxBuffer: 64 << 20, timeout: 5 * 60e3, windowsHide: true });
 const collected = [`${collect.stdout || ''}${collect.stderr || ''}`.trim(),
   collect.error && `${collect.error.code || 'spawn error'}: ${collect.error.message}`,
   collect.signal && `signal: ${collect.signal}`, collect.status === null && !collect.error && 'collector exited without a status'].filter(Boolean).join('\n');
+
+let inputs = null;
+try { inputs = JSON.parse(read(INPUTS)); } catch {}
+const sources = inputs ? captureSources(inputs) : missingSources(!!config.ado);
+const collection_complete = !!inputs && collect.status === 0 && captureComplete(inputs);
+writeFileSync(join(OUT, 'signin-status.json'), JSON.stringify(signinEvidence(inputs || {})));
+let earlyAlert = false;
+if (!collection_complete) {
+  repaint(true, sources);
+  earlyAlert = notify(failureMessage({sources}));
+}
 
 // Judge. The agent reads the inputs, the previous result, the user's clicks and the config, follows JUDGE.md,
 // and writes BRIEF - nothing else: no network, no shell of its own, so it runs with the least access either agent has.
@@ -79,7 +97,6 @@ Write your result to BRIEF and change no other file. Then reply with the summary
 const agent = config.agent || 'codex';
 const model = config.judge_model || 'gpt-6-luna';
 const t0 = Date.now();
-let log;
 if (collect.status !== 0 || !existsSync(INPUTS)) {
   log = { agent, model: model || 'default', is_error: true, result: 'Collection failed; the previous panel has been preserved.', collector_error: collected };
 } else if (agent === 'codex') {
@@ -88,7 +105,7 @@ if (collect.status !== 0 || !existsSync(INPUTS)) {
   const last = join(DIR, 'last-message.txt');
   const supplied = judgePrompt({
     instructions: read(join(SKILL, 'JUDGE.md')),
-    inputs: JSON.parse(read(INPUTS)), previous: PREV ? JSON.parse(read(PREV)) : null,
+    inputs, previous: marketingPrevious(PREV ? JSON.parse(read(PREV)) : null, config.marketing?.github, inputs.github),
     state: JSON.parse(read(join(OUT, 'state.json')) || '{}'), config,
     facts: { SINCE, LOOKBACK, FIRST, TODAY_PROJECT, now: now.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
   });
@@ -108,7 +125,8 @@ if (collect.status !== 0 || !existsSync(INPUTS)) {
     try {
       const result = parseJudgeResult(read(last));
       writeFileSync(BRIEF, JSON.stringify(result.brief));
-      log.result = result.summary;
+      log.judge_summary = result.summary;
+      log.result = runSummary(result.brief, sources);
     } catch (e) { log.is_error = true; log.result = 'Judge output rejected: ' + String(e.message || e); }
   }
 } else {
@@ -124,20 +142,21 @@ log.collect = collected;
 // Render what the judge wrote. A run that wrote nothing usable leaves the last good result up - the panel marks it
 // stale once it's over 90 minutes old.
 let brief = null;
-try { brief = JSON.parse(readFileSync(BRIEF, 'utf8')); } catch (e) { log.is_error = true; log.brief_error = String(e.message || e); }
+if (!log.is_error) {
+  try { brief = JSON.parse(readFileSync(BRIEF, 'utf8')); } catch (e) { log.is_error = true; log.brief_error = 'Judge did not produce a usable brief: ' + String(e.message || e); }
+}
 if (brief && !log.is_error) {
   try { renderBrief(BRIEF, INPUTS); } catch (e) { log.is_error = true; log.render_error = String(e.stack || e).slice(0, 2000); }
 }
 if (/"syncing":\s*true/.test(read(join(OUT, 'index.html')))) repaint(false);
-if (existsSync(INPUTS)) {
-  try {
-    const inputs = JSON.parse(read(INPUTS));
-    log.sources = captureSources(inputs);
-    log.collection_complete = captureComplete(inputs);
-    if (!log.collection_complete) log.is_error = true;
-  } catch (e) { log.is_error = true; log.collection_error = String(e.message || e); }
+log.sources = sources;
+log.collection_complete = collection_complete;
+if (!collection_complete) log.is_error = true;
+if (log.is_error) {
+  repaint(false, [...sources, ...(collection_complete ? [{name:'Action list',ok:false,note:'Luna could not update the panel; previous information is retained.'}] : [])]);
+  log.notification_sent = earlyAlert || notify(failureMessage(log));
 }
-
+log.result = String(log.result || 'Meta-Nav run did not complete.').replace(/\s+/g, ' ').trim();
 writeFileSync(join(OUT, 'logs', `${stamp}${RESCAN ? '-rescan' : ''}.json`), JSON.stringify(log, null, 1));
 
 // The inputs hold private chats and mail: deleted every time, even after a failed run
@@ -145,4 +164,15 @@ rmSync(DIR, { recursive: true, force: true });
 for (const f of readdirSync(join(OUT, 'logs'))) {
   const p = join(OUT, 'logs', f);
   if (f.endsWith('.json') && Date.now() - statSync(p).mtimeMs > 7 * 864e5) rmSync(p);
+}
+
+} catch (error) {
+  log = { ...(log || {}), is_error:true, collection_complete:false,
+    result:'Meta-Nav could not complete this refresh; previous information is retained.',
+    runner_error:String(error.message || error).slice(0,1000), sources:missingSources(!!config.ado) };
+  try { repaint(false, log.sources); } catch {}
+  try { log.notification_sent=notify(failureMessage(log)); } catch {}
+  writeFileSync(join(OUT,'logs',`${stamp}.json`),JSON.stringify(log,null,1));
+} finally {
+  rmSync(join(OUT,'.inputs'), {recursive:true,force:true});
 }

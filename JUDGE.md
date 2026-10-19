@@ -17,6 +17,59 @@ Scripts collect; **your job is judgement: decide what the user should do, in wha
 
 ---
 
+## Role-specific instructions (when `config.marketing` is present)
+
+Always rewrite carried-over wording for this role; do not copy old developer reasons.
+Never mention a count of review threads, changed files or CI in the marketing panel, including from PREV.
+These instructions override developer examples and ranking defaults elsewhere in this document.
+The user is Ian, SSW's **Marketing Coordinator**, not a developer. His GitHub work is content.
+His work board is **SSW.Marketing / SSW.Marketing Team**. Use the current iteration and dates
+returned by Azure DevOps: the team's two-week sprints start on Fridays. Never borrow a TinaCloud
+GitHub sprint date as the deadline for his SSW.Marketing sprint.
+
+The question is **what has Ian been asked to do, by whom, and by when?**
+- Foreground unfulfilled asks and Ian's promises from email and Teams, from his manager, product
+  teams, agencies and vendors. A direct request outranks a passive notification. Keep separate
+  tasks only when their deliverables differ. When an ADO sprint item already covers a Teams or email
+  ask (for example the SSWTV tagline proposal), create one queue row using the ADO URL and include the
+  conversation as an action. Never keep a second row merely because it has a different source ID. `queue.who` names the asker or person awaiting Ian's
+  work, using only evidenced names; use [] when unknown. Name the person in `reason` when useful.
+- Prioritise content approvals and launch deadlines, meeting preparation and explicit follow-up,
+  current sprint items assigned to Ian, and failures that stop marketing automations. Use plain
+  actions such as "Approve YakShaver blog", "Reply to Hark about pricing" or "Prepare release copy".
+- `due` is an evidenced deadline, dated promise, or the supplied current sprint end for an assigned
+  sprint item. Do not turn an email's arrival date, a PR's age, or an old meeting into a deadline.
+  When no deadline is known, use null and say "No date agreed" in the reason if it matters.
+- `waiting` states who owes Ian which decision, asset, approval or answer, and what it blocks.
+  Draft a specific nudge; never assume silence proves access, completion or agreement.
+- Meetings get prep/follow-up actions only where an agenda, ask or promise supplies the work.
+  An elapsed calendar entry alone is not evidence that Ian owes a follow-up. Never present a past
+  meeting as upcoming, and do not invent tomorrow's calendar from today's recurring meetings.
+- Product release messages for TinaCMS, YakShaver and EagleEye are marketing signals. When
+  coverage is unknown, surface "Check blog coverage for <release>" with the source link and that
+  uncertainty, rather than claiming a blog is missing or that a publication date was agreed.
+  This coverage check is a standing responsibility of Ian's marketing role, so include it in queue unless a matching content task already covers that release. Do not leave an uncovered release as only developer news. Avoid duplicating an existing matching content task. EagleEye is blog-only in Ian's workflow.
+- GitHub `content_review` items are **content review/approval**. Say "Review TinaCMS blog" and
+  name the author when known. Rank by publication deadline and who is waiting, never line count,
+  CI status or unresolved thread count. A publication blocker is a short, plain explanation and
+  a request to the author to resolve it. Do not assign Ian software repairs or generic code review.
+- A GitHub list filtered to content can legitimately be empty. Do not resurrect an old technical
+  review from PREV merely because the PR remains open. Drop automatic code-only reviews and
+  implementation chores from the previous developer-oriented panel; retain an independent,
+  explicit marketing ask about the same item if it still exists. Describe removal as out of scope,
+  never as completed work. Excluded side projects never appear in any section.
+- Automation failure notices can be supplied even from bot chats. Surface a failure when it affects
+  Ian's marketing collection, social posts, reporting or content workflow. Healthy automated notices,
+  software build chatter and routine developer releases without a content implication stay out.
+- Keep existing ownership, evidence, deduplication and closure rules. A missing or failed source
+  is unknown, never evidence that an ask closed. Do not tell Ian to set up Microsoft Graph or APIs.
+
+For marketing work, estimate effort from the deliverable: D = a quick answer or approval,
+C = a short content review or meeting prep, B = writing a blog or preparing a campaign,
+A = a substantial content package. Put an evidenced near deadline or person blocked by an
+approval first, then use cost of delay. Manager requests matter because of their effect and date,
+not merely because of the manager's title. Explain conflicts briefly in `tradeoffs`.
+
 ## Step 1: Read what was collected
 
 Your prompt gives this run's facts: `SINCE` (the window starts here — the last run, never further back than `LOOKBACK`), `LOOKBACK` (`config.lookback_days`, 30 days back: how far open loops reach), `FIRST` (`yes` on a first run or a full rescan), `TODAY_PROJECT` (step 5c), and the paths `INPUTS`, `PREV` (`none` on a first run), `STATE` (the user's clicks; may be missing), `CONFIG` and `BRIEF`.
@@ -223,4 +276,30 @@ Don't set `new` or `updated` — `run.mjs` computes both against the previous ru
 
 `run.mjs` renders the page from `BRIEF` and adds `work` and `review_requests` from the inputs itself. Never open the panel: the user keeps it open in a browser tab, and it reloads itself when a run writes something new.
 
+The structured summary describes priorities and section counts only; the runner appends source health from collection facts. Never infer failures from PREV.
+
 End with a short reply — it goes into the run's log, where the user looks when something seems off: the headline, counts per section, anything new, any failed source, and the `tradeoffs`.
+
+### Marketing review clarifications
+
+When marketing mode is enabled:
+- A deadline derived solely from a sprint end is `due: "Sprint ends Fri 23/10"` (using the actual
+  supplied date), not an independently agreed publication/approval deadline. Include the current
+  item state (In progress, Committed, etc.) in `reason` where that changes the next action.
+- `who` on a queue item is the requester/approver, never a reassignment away from Ian. Phrase the
+  reason as "Penny asked you to…" or "You need Uly and Adam's approval…", and never imply an
+  approval has been requested or received without evidence. Unknown approval state stays unknown.
+- The current SSWTV tagline work is one matter: "Propose SSWTV tagline options", "Broaden SSW TV
+  tagline", "Create tagline replacement options proposal" and "SSW TV Tagline Rewrite Proposal".
+  Create exactly one queue row, put the related ADO items and original Teams ask in its actions,
+  and remove the duplicate old row. Its subtasks are context, not extra queue rows.
+- The two ASF work items need distinct deliverables to justify two rows: label planning and
+  drafting/production explicitly when the sources distinguish them. Otherwise combine them.
+- For a content PR Ian authored, requested changes mean revising his content, not reviewing
+  someone else's code. A pending PR alone is waiting for approval; don't invent a task for Ian.
+- Waiting rows use `what` as their title in this panel. Make `what` name the missing decision,
+  asset or access; `why` says what it blocks, or null if unknown. Do not add a redundant `title`.
+- Show product coverage checks only for evidenced release/launch signals. With no TinaCMS or
+  EagleEye release evidence in this run, invent neither a release nor a missing blog post.
+- The renderer already displays a prominent source-failure banner. Do not create an invented
+  automation-failure queue item just to fill a health category, or manufacture meeting follow-up.

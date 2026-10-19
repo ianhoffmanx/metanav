@@ -36,11 +36,13 @@ export function tool(cmd, args = [], opts = {}) {
 }
 
 // GitHub, with the token gh is signed in with
+const networkBudget = AbortSignal.timeout(210000);
+const networkSignal = () => AbortSignal.any([networkBudget, AbortSignal.timeout(20000)]);
 let ghTok;
-const ghToken = () => (ghTok ??= (tool('gh', ['auth', 'token']).stdout || '').trim());
+const ghToken = () => (ghTok ??= (tool('gh', ['auth', 'token'], { timeout: 15000 }).stdout || '').trim());
 export async function github(path, body) {
   const r = await fetch(path.startsWith('https://') ? path : `https://api.github.com${path}`, {
-    method: body ? 'POST' : 'GET',
+    method: body ? 'POST' : 'GET', signal: networkSignal(),
     headers: { Authorization: `bearer ${ghToken()}`, Accept: 'application/vnd.github+json', 'User-Agent': 'meta-nav' },
     body: body && JSON.stringify(body),
   });
@@ -56,12 +58,12 @@ export async function graphql(query) {
 // Azure DevOps, with a token for the account az is signed in with (499b84ac-… is Azure DevOps' own resource id)
 let adoTok;
 const adoToken = () => (adoTok ??= (tool('az', ['account', 'get-access-token', '--resource', '499b84ac-1321-427f-aa17-267ca6975798',
-  '--query', 'accessToken', '-o', 'tsv']).stdout || '').trim());
+  '--query', 'accessToken', '-o', 'tsv'], { timeout: 20000 }).stdout || '').trim());
 export async function ado(url, body) {
   const token = adoToken();
   if (!token) throw new Error('no Azure DevOps token - run `az login`');
   const r = await fetch(url, {
-    method: body ? 'POST' : 'GET',
+    method: body ? 'POST' : 'GET', signal: networkSignal(),
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: body && JSON.stringify(body),
   });

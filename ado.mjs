@@ -2,6 +2,7 @@
 // on your review, your own pull requests' next step, and where someone @mentioned you - across the whole organisation.
 // Optionally the latest release of one pipeline. Deterministic, no judgement; the shapes match GitHub's.
 import { ado, config } from './common.mjs';
+import { projectScope, iterationScope } from './ado-scope.mjs';
 
 const V = 'api-version=7.1';
 const text = html => String(html || '').replace(/<br\s*\/?>|<\/(p|div|li)>/gi, '\n').replace(/<[^>]+>/g, '')
@@ -14,6 +15,9 @@ export async function fromAdo(SINCE, LOOKBACK) {
   const m = (config.ado?.base_url || '').match(/^(https:\/\/dev\.azure\.com\/[^/]+)(?:\/([^/?#]+))?/);
   if (!m) return { ok: true, skipped: true };
   const [, ORG, PROJECT] = m;
+  const scoped = config.ado.project_only ? projectScope(PROJECT) : '';
+  const iterations = config.ado.team ? (await ado(`${ORG}/${PROJECT}/${encodeURIComponent(config.ado.team)}/_apis/work/teamsettings/iterations?$timeframe=current&${V}`)).value || [] : [];
+  if (config.ado.team && iterations.length !== 1) throw new Error('Current SSW.Marketing team sprint could not be determined; sprint work is unknown.');
   const me = (await ado(`${ORG}/_apis/connectionData?api-version=7.1-preview`)).authenticatedUser;
   const isMe = u => u && (u.id === me.id || u.uniqueName === me.properties?.Account?.$value);
   const wiql = async q => ((await ado(`${ORG}/_apis/wit/wiql?${V}`, { query: q })).workItems || []).map(w => w.id);
@@ -46,7 +50,7 @@ export async function fromAdo(SINCE, LOOKBACK) {
 
   // Work under way: assigned to you, not finished, and in a sprint running now - or in progress and touched within the
   // lookback (an "Active" task nobody has touched for years isn't work under way)
-  const assigned = await items(await wiql(`SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] = @Me AND [System.State] NOT IN ('Done', 'Closed', 'Removed')`));
+  const assigned = await items(await wiql(`SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] = @Me AND [System.State] NOT IN ('Done', 'Closed', 'Removed')${scoped}${config.ado.current_iteration_only ? iterationScope(iterations) : ''}`));
   const pbis = [];
   for (const w of assigned) {
     const cat = await category(f(w, 'TeamProject'), f(w, 'WorkItemType'), f(w, 'State'));
@@ -64,13 +68,14 @@ export async function fromAdo(SINCE, LOOKBACK) {
       comments: await comments(w),
       status: f(w, 'State'), sprint: current ? f(w, 'IterationPath').split('\\').pop() : '-',
       sprint_end: current ? sp.finishDate.slice(0, 10) : null,
+      due: w.fields['Microsoft.VSTS.Scheduling.DueDate'] || null,
     });
   }
 
   // Pull requests, org-wide. A PR's web page, its discussion threads, its build checks and the work items it's linked to.
   const prUrl = p => `${ORG}/${encodeURIComponent(p.repository.project.name)}/_git/${encodeURIComponent(p.repository.name)}/pullrequest/${p.pullRequestId}`;
   const prApi = p => `${ORG}/${encodeURIComponent(p.repository.project.name)}/_apis/git/repositories/${p.repository.id}/pullRequests/${p.pullRequestId}`;
-  const prList = q => ado(`${ORG}/_apis/git/pullrequests?${q}&searchCriteria.status=active&$top=100&${V}`).then(r => r.value || []);
+  const prList = q => config.ado.read_prs === false ? Promise.resolve([]) : ado(`${ORG}${scoped ? '/' + PROJECT : ''}/_apis/git/pullrequests?${q}&searchCriteria.status=active&$top=100&${V}`).then(r => r.value || []);
   const threads = async p => ((await ado(`${prApi(p)}/threads?${V}`)).value || []).filter(t => !t.isDeleted)
     .map(t => ({ ...t, comments: (t.comments || []).filter(c => c.commentType !== 'system' && !c.isDeleted) })).filter(t => t.comments.length);
   const lastPush = async p => ((await ado(`${prApi(p)}/iterations?${V}`)).value || []).map(i => i.createdDate).sort().pop();
@@ -132,7 +137,7 @@ export async function fromAdo(SINCE, LOOKBACK) {
 
   // @mentions in work item discussions since SINCE (@RecentMentions: the last 30 days). Mentions in PR comments come
   // as notification mail.
-  const mentioned = await items(await wiql(`SELECT [System.Id] FROM WorkItems WHERE [System.Id] IN (@RecentMentions) AND [System.ChangedDate] >= '${SINCE.slice(0, 10)}'`));
+  const mentioned = await items(await wiql(`SELECT [System.Id] FROM WorkItems WHERE [System.Id] IN (@RecentMentions) AND [System.ChangedDate] >= '${SINCE.slice(0, 10)}'${scoped}`));
   const mentions = [];
   for (const w of mentioned) {
     const cs = await comments(w);
@@ -157,7 +162,7 @@ export async function fromAdo(SINCE, LOOKBACK) {
         url: `${ORG}/${PROJECT}/_releaseProgress?_a=release-pipeline-progress&releaseId=${id}`, is_new: r.createdOn >= SINCE };
     }
   }
-  return { ok: true, me: me.providerDisplayName || null, review_requests, work, mentions, ...(release && { release }) };
+  return { ok: true, me: me.providerDisplayName || null, iterations, review_requests, work, mentions, ...(release && { release }) };
 }
 
 // Current state of Azure DevOps work items and PRs a carried-over item points at, by URL - so the run can tell a merged

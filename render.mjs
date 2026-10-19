@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSources, captureComplete } from './capture-status.mjs';
+import { notify } from './notifications.mjs';
 import { OUT, SKILL, WIN, config, tool } from './common.mjs';
 
 // Sections whose items get a "+NEW" flag when they weren't in the previous run ("done": closed since the last run)
@@ -39,22 +40,9 @@ function writePanel(data) {
 }
 
 // Repaint the last result with or without the "syncing" flag. No history, no notification.
-export function repaint(syncing) {
+export function repaint(syncing, sources) {
   const last = runFiles().at(-1);
-  if (last) writePanel({ ...JSON.parse(readFileSync(join(RUNS, last), 'utf8')), syncing });
-}
-
-// The panel is pull; push only what can't wait - a new high-urgency item
-function notify(title) {
-  if (process.platform === 'darwin') {
-    tool('osascript', ['-e', 'on run argv', '-e', 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"', '-e', 'end run', 'Meta-Nav', title]);
-  } else if (WIN) {
-    const ps = `$t = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-$x = $t.GetElementsByTagName('text'); $x.Item(0).AppendChild($t.CreateTextNode('Meta-Nav')) > $null; $x.Item(1).AppendChild($t.CreateTextNode([Console]::In.ReadToEnd())) > $null
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($t))`;
-    // -EncodedCommand: the script as base64 UTF-16, so nothing in it needs quoting through the shell; the title comes on stdin
-    tool('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { input: title });
-  }
+  if (last) writePanel({ ...JSON.parse(readFileSync(join(RUNS, last), 'utf8')), syncing, ...(sources && { sources }) });
 }
 
 export function renderBrief(briefFile, inputsFile) {
@@ -66,8 +54,8 @@ export function renderBrief(briefFile, inputsFile) {
     brief.sources = captureSources(inputs);
     complete = captureComplete(inputs);
     const gh = inputs.github || {};
-    brief.work ??= gh.work || [];
-    brief.review_requests ??= gh.review_requests || [];
+    brief.work = [...(inputs.ado?.work || []), ...(gh.work || [])];
+    brief.review_requests = [...(inputs.ado?.review_requests || []), ...(gh.review_requests || [])];
     // The panel's "Synced" time, .last-run (the next window's start) and the "updated" flags all hang on this.
     // A model guesses the time; the collector knows when it read everything.
     if (inputs.collected_at) brief.generated_at = inputs.collected_at.slice(0, 19) + 'Z';

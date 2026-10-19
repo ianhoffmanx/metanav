@@ -30,7 +30,7 @@ This document follows one refresh from start to finish, then explains each part 
 
 ## 2. Collecting the data (no AI involved)
 
-`collect.mjs` reads everything in about 25 seconds and writes one file, `inputs.json`. Outlook and Teams are read in a headless Chrome that has its own profile, where you signed in once.
+`collect.mjs` writes one file, `inputs.json`. Collection on Windows can take several minutes. Outlook and Teams use a regular Chrome window on Meta-Nav's own profile; the window stays open so collection can reuse its signed-in application tabs and Defender proxy origins. A bounded check closes frozen or duplicate application tabs before attaching, while keeping the profile and healthy tabs.
 
 | Source | What's read | What's never done |
 | --- | --- | --- |
@@ -100,7 +100,7 @@ The page doesn't show these. When the order looks wrong, they tell you which rul
 
 ## 5. The page, section by section
 
-**Header.** It shows today's date and time of day, when the data was last synced, and **SYNC NOW**. A red banner appears when a source failed. When the cause is an expired sign-in, the banner has a **SIGN IN** button: it opens a Chrome window on Outlook and Teams, closes it once you're in, and refreshes.
+**Header.** It shows today's date and time of day, when the data was last synced, and **SYNC NOW**. A red banner appears when a source failed. When the cause is an expired sign-in, the banner has a **SIGN IN** button: it opens a Chrome window on Outlook and Teams, leaves the signed-in window open, and refreshes. The sign-in status is updated from each collection; a check older than 90 minutes is labelled stale. Collection or judge failures also raise a Windows toast and retain the previous panel with a warning.
 
 **Target: do this now.** The top of the ranked list, as a large card. It shows:
 - why it's first (the red tag);
@@ -138,7 +138,7 @@ Click a bar to open it:
 ## 7. Privacy and files
 
 - **Read-only.** Nothing is sent, opened or marked read anywhere.
-- **Everything stays on your computer.** The collected mail and chats (`inputs.json`) are deleted at the end of every run.
+- **Local by default.** The separately installed Hermes exporter can send encrypted run results to the user's own receiver. The collected mail and chats (`inputs.json`) are deleted at the end of every run.
 
 | Where | What |
 | --- | --- |
@@ -158,3 +158,16 @@ Click a bar to open it:
 | Something finished is still listed | Tick it. Runs only close what the data shows, so a reply in a system Meta-Nav doesn't read won't close it. |
 | Something is missing | Runs judge again from scratch each time. `metanav` refreshes now; the run's summary in the log lists what it saw. |
 | Dates or times look wrong | Outlook on the web must be in English, with a day/month/year date format and a 12-hour clock. |
+
+## Marketing configuration
+
+With `config.marketing` enabled, the existing judge and panel focus on asks, promises, approvals,
+meeting prep and follow-up, content deadlines and waiting on people. `queue.who` identifies the
+asker, `due` is evidenced or null, and GitHub approvals are framed as content reviews. CI, file
+counts and review-thread counts do not rank marketing work; a publication blocker still surfaces.
+
+`ado.base_url`, `team`, `project_only`, `current_iteration_only` and `read_prs: false` constrain
+Azure DevOps to the user's assigned marketing sprint work. Sprint dates come from the team API.
+`marketing.github` lists allowed organisations, content repositories and excluded side projects.
+Source health and the source-health part of each log summary are determined by code, not the judge.
+See `docs/windows-marketing-maintenance.md` for the reconciliation and validation record.
