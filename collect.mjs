@@ -14,6 +14,7 @@ import { adoStates } from './ado.mjs';
 import { fetchAll } from './fetch.mjs';
 import { withDeadline } from './deadline.mjs';
 import { marketingPrevious, inGithubScope } from './marketing.mjs';
+import { SOCIAL_WORDS } from './social.mjs';
 import { openApp, pageForApp, signedIn as sessionSignedIn, connectMicrosoftBrowser } from './microsoft.mjs';
 
 const [SINCE, LOOKBACK, FIRST, PREV, OUT] = process.argv.slice(2);
@@ -203,7 +204,8 @@ async function teams(page) {
   });
   if (!await signedIn(page)) return { signin_needed: true, conversations: [] };   // Teams too can go to sign-in after it opens
   const extract = readFileSync(join(HERE, 'teams-extract.js'), 'utf8')
-    .replace('__SINCE__', SINCE).replace('__ACTIVE_SINCE__', FIRST === 'yes' ? LOOKBACK : SINCE).replace('__LOOKBACK__', LOOKBACK);
+    .replace('__SINCE__', SINCE).replace('__ACTIVE_SINCE__', FIRST === 'yes' ? LOOKBACK : SINCE).replace('__LOOKBACK__', LOOKBACK)
+    .replace('__SOCIAL__', () => JSON.stringify(SOCIAL_WORDS));
   const data = await timed('Teams extract', () => page.evaluate(`(${extract})()`));
   if (!data || !Array.isArray(data.conversations)) throw new Error('Teams cache did not load; collection is incomplete');
   return { signin_needed: false, conversations: data.conversations.filter(c => !BOTS.includes(c.name) || (config.marketing && c.messages.some(m => /fail(?:ed|ure)?|error|expired|timed out|stopped|not running/i.test(m.text)))) };

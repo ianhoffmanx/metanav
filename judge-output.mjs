@@ -32,6 +32,8 @@ export function parseJudgeResult(text) {
   for (const section of ['queue', 'waiting', 'calendar', 'highlights', 'done']) {
     if (!Array.isArray(brief[section]) || brief[section].some(x => !x || typeof x !== 'object' || Array.isArray(x))) throw new Error('Judge returned an invalid ' + section);
   }
+  // `social` is checked loosely here: a malformed item is dropped when the run is rendered (social.mjs), never a failed run
+  if (brief.social !== undefined && !Array.isArray(brief.social)) throw new Error('Judge returned an invalid social');
   return { brief, summary: result.summary };
 }
 

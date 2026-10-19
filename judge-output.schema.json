@@ -336,6 +336,80 @@
             ],
             "additionalProperties": false
           }
+        },
+        "social": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable across runs: the mail convid, or Teams <conversation id>/<message id>, of the post or invite that announced it."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "birthday",
+                  "anniversary",
+                  "welcome",
+                  "farewell",
+                  "event",
+                  "news"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "description": "Short, e.g. \"Penny's birthday\"."
+              },
+              "who": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "First names of the people it is about."
+              },
+              "when": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "ISO date (YYYY-MM-DD) or datetime of the occasion; the arrival date of the post when it names none; null if unknown."
+              },
+              "where": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The chat or channel it was posted in, or the location of the event; null if unknown."
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "One line: what happens or what was said. Nothing the source does not say."
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "https:// or msteams: link of the post or invite, copied as-is; null if none."
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "title",
+              "who",
+              "when",
+              "where",
+              "detail",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Workplace social from the last 2 days to the next 7: birthdays, anniversaries, welcomes, farewells, social events, personal news. [] when there is none."
         }
       },
       "required": [
@@ -349,7 +423,8 @@
         "waiting",
         "calendar",
         "highlights",
-        "done"
+        "done",
+        "social"
       ],
       "additionalProperties": false
     },

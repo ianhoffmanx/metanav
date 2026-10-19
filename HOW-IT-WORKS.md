@@ -171,3 +171,12 @@ Azure DevOps to the user's assigned marketing sprint work. Sprint dates come fro
 `marketing.github` lists allowed organisations, content repositories and excluded side projects.
 Source health and the source-health part of each log summary are determined by code, not the judge.
 See `docs/windows-marketing-maintenance.md` for the reconciliation and validation record.
+
+### Workplace social
+
+Each run also lists workplace social - birthdays, anniversaries, new starters, farewells, social events and
+personal news - from the last two days to the next seven, as a `social` array in `runs/*.json` (empty when there
+is none). It comes from what is already collected: Outlook mail and invites (including the monthly SSW Times staff
+update), Teams chats, and social-looking posts in Teams channels (the only channel messages the collector keeps).
+It is not part of the Requests, Waiting On or Phan-Site lists and never changes them. `social.mjs` fixes the shape:
+`{id, kind, title, who, when, where, detail, url, new}`, with `new` set by the runner against the previous run.

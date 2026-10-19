@@ -132,7 +132,7 @@ Each label is `Title, 9:30 AM to 9:45 AM, Friday, September 25, 2026, [location]
 
 The collector reads Teams' own cache (IndexedDB), with `teams-extract.js`, once it has caught up — no network call of its own, no chat opened, nothing marked read. `teams.signin_needed` is handled like Outlook's (step 3); `teams.error` → `ok: false` with a short note.
 
-`teams.conversations[]` has `kind` (`dm` / `group` / `meeting`; channels aren't read), `name`, `unread`, and `messages[]` of `{id, at, from, unread, text}` where `from: "ME"` is the user. Bot chats (`config.teams.skip_chats`) are already left out: they're tests or reminders, not people.
+`teams.conversations[]` has `kind` (`dm` / `group` / `meeting`; a `channel` appears only when a post there looks like workplace social — a birthday, a welcome, drinks — and holds only those posts: never an ask, see "Workplace social"), `name`, `unread`, and `messages[]` of `{id, at, from, unread, text}` where `from: "ME"` is the user. Bot chats (`config.teams.skip_chats`) are already left out: they're tests or reminders, not people.
 Only conversations with something new since `SINCE` are included (since `LOOKBACK` on a first run) — the others have nothing to re-judge; their loops come from `PREV`. A conversation the user took part in carries the whole lookback of history, for context. No conversations and no error means a quiet stretch.
 Each message carries its `link`, which opens it in the **Teams desktop app** — use it as the item's `url` (the message that opened the loop) as-is; never build one.
 Give every Teams item `"id": "<conversation id>/<message id>"`, where the message is **the one that opened the loop** — the ask, or the user's promise — never a later reply or nudge. It's the item's identity for `+NEW`, the update flag and the panel's "done" (stored by id), so it must come out the same on every run, including a first run that rebuilds everything, and must not change when link formats do.
@@ -235,6 +235,35 @@ And `actions`: 1–2 buttons that start the work, first is the main one — `{ "
 No emoji; no repeating the source ("On Teams, …") — the link already goes there. **What the run writes in its own words is English** — `title`, `what`, `why`, `reason`, `detail`, `where`, `due`, action `label`s, `done` rows, `sources` notes, `headline`, `cost`, `tradeoffs` — even when the source message was in another language. **People's words stay in their language:** `quote` and `thread` are what they wrote, untranslated, and a `nudge` is sent to them, so it's in the conversation's language. Names stay as people spell them. Dates in `due`: weekday + day/month, "Tue 29/9". A time that isn't today carries its day — "yesterday 12:10", "Mon 12:10"; a bare time always means today.
 **`url` goes to where the ask or update was made** — the comment (`comments[].url`), the Teams message, the review (`latest_feedback_url`) — not just the issue, PR or chat it sits in; an action can still open the whole issue or PR. Mail outside the Inbox can only open its folder (3a).
 
+## Workplace social — `brief.social`
+
+Ian wants to see the human side of work next to the work: birthdays, work anniversaries, welcomes for new starters, farewells, social events (drinks, lunches, parties, karaoke), and personal news (a baby, a wedding, a congratulations for a colleague). It is a separate list, `social`, in `brief.json`. It is never part of `queue`, `waiting`, `highlights` or `headline`, and it never changes their ranking or counts.
+
+**Where to look — only what was collected, no new sources:**
+- **Mail** (`mail.folders`, received folders): a colleague's invite or announcement ("<Name> Birthday Dinner, Drinks and Karaoke!" arrives as a `Meeting` row from the person themselves); the monthly **SSW Times** newsletter, whose "Staff Update" names the new starters, anniversaries and farewells of the month — use only the names and facts that its row text actually shows, never guess the rest of it; all-staff notices from admin or HR about a welcome or a farewell.
+- **Teams** (`teams.conversations`): colleagues' chats and group chats, and the `channel` posts the collector let through because they look social. Take the message's `link` as the `url`, as-is.
+- **Calendar** (`mail.calendar`): today's entries such as a birthday morning tea.
+- **Sent** mail is Ian's own words: a "congratulations" he sent shows the occasion happened, but it is not a new item by itself.
+
+**What is not social:** work events (conferences, webinars, user groups, paid events, customer or vendor meetings); automated mail (SSWFreeLunch LunchOps and timesheet reminders, Skillshop, newsletters from outside SSW, product "Welcome!" emails); Ian's own onboarding mail; handover and responsibility mail; a work win ("congrats on shipping the release") unless it is about a person's milestone. **Sensitive personal news — illness, bereavement, anything a person has not announced themselves — is never listed.** Skip an item when the source does not say who it is about.
+
+**Kinds:** `birthday`; `anniversary` (a work anniversary); `welcome` (a new starter); `farewell` (someone leaving, a last day); `event` (a social get-together: drinks, lunch, party, karaoke, morning tea); `news` (a baby, a wedding, a congratulations for a person). Pick the one that fits best; a birthday party invite is an `event` if the invite is for the get-together, a `birthday` if it is the birthday post itself — never both for the same occasion.
+
+**Fields:** `{ "id", "kind", "title", "who", "when", "where", "detail", "url" }` — no `new` (the runner sets it).
+- `id` — stable across runs and rebuilds: the mail `convid`, or `<conversation id>/<message id>` for Teams, of the post or invite that announced it. When one mail announces several things (the SSW Times), use `<convid>#<kind>-<first name>`.
+- `title` — short, in English, about the person: "Penny's birthday", "Welcome Deborrah", "Sam's farewell drinks", "Team lunch".
+- `who` — the names of the people it is about, as written in the source; `[]` for an event with no named person.
+- `when` — the occasion's date as `YYYY-MM-DD`, or a full ISO datetime when a time is given (an invite's own time from the row's `meeting`, which is D/M/Y, converted). When the source names no date, use the **date it was posted or arrived** (`at`, `time`) — an announcement is about the day it was made. `null` only when no date exists at all.
+- `where` — the chat or channel it was posted in, or the event's location; `null` if unknown.
+- `detail` — one line saying what happens or what was said ("Dinner, BYO drinks and karaoke — RSVP to Penny"). Nothing the source does not say.
+- `url` — the post's `https://` or `msteams:` link, or an Outlook Inbox link for mail (rules in step 3a); `null` if none.
+
+**Window:** keep an item only if its `when` is from **two days ago to seven days ahead** (today is `RUN_FACTS.now` in `RUN_FACTS.timezone`); the runner drops anything outside it. Collection only brings new mail and messages, so **carry over** every item from `PREV.social` that is still inside the window, with the same `id`, and drop one that was cancelled or moved out of the window.
+
+**One occasion, one item:** the same person and kind on the same day from an invite, a Teams post and a calendar entry is one item — keep the one with the best link. Don't repeat an item that is also in `queue`; when an RSVP or a contribution is asked for by a date, that is a normal `queue` row (effort D) **and** the social item stays.
+
+If there is nothing in the window, `social` is `[]` — an honest empty list.
+
 ## Step 6: Compose `brief.json`
 
 Write it to `BRIEF`, the whole file at once, as valid JSON.
@@ -263,13 +292,15 @@ Write it to `BRIEF`, the whole file at once, as valid JSON.
       "nudge_now": true, "why": "Quiet 9 days", "since": "<ISO of the ask>", "last_activity": "<ISO>", "url": "..." }
   ],
   "calendar": [ { "start": "09:30", "end": "09:45", "title": "...", "all_day": false } ],
+  "social": [ { "id": "<convid>", "kind": "birthday|anniversary|welcome|farewell|event|news", "title": "Penny's birthday", "who": ["Penny"], "when": "2026-10-21",
+      "where": "Brisbane office", "detail": "Morning tea at 10:30", "url": "https://outlook.office.com/mail/inbox/id/…" } ],
   "highlights": [ { "id": "...", "source": "teams|mail|ado", "where": "Project chat", "title": "...", "detail": "...", "url": "...", "at": "<ISO>" } ],
   "done": [ { "what": "PR #1803 merged", "when": "10:12", "url": "...", "at": "<ISO>", "id": "optional: the id of the item it closes, when the user ticked it", "effort": "D|C|B|A: when it closes a queue item, that item's effort" } ],
   "sources": [ { "name": "Outlook", "ok": true, "note": "3 new emails" } ]
 }
 ```
 
-Don't set `new` or `updated` — `run.mjs` computes both against the previous run from `id` and `last_activity`. Mail items: `"id": "<convid>"`; Teams items: `"id": "<conversation id>/<message id>"`; GitHub items: the PR/issue URL.
+Don't set `new` or `updated` (on `social` items too) — `run.mjs` computes both against the previous run from `id` and `last_activity`. Mail items: `"id": "<convid>"`; Teams items: `"id": "<conversation id>/<message id>"`; GitHub items: the PR/issue URL.
 `sources`: one entry each for **Outlook, Teams, GitHub**, and **Azure DevOps** when `config.ado` is set; `ok: false` with a short `note` whenever one failed or was skipped. The page shows a red banner for any failed source — a quiet panel must mean "nothing happened", never "didn't look".
 
 ## Step 7: Finish

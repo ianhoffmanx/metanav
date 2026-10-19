@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { captureSources, captureComplete } from './capture-status.mjs';
 import { notify } from './notifications.mjs';
 import { OUT, SKILL, WIN, config, tool } from './common.mjs';
+import { normaliseSocial } from './social.mjs';
 
 // Sections whose items get a "+NEW" flag when they weren't in the previous run ("done": closed since the last run)
 const TRACKED = ['queue', 'waiting', 'highlights', 'done'];
@@ -64,8 +65,10 @@ export function renderBrief(briefFile, inputsFile) {
   const key = i => i.id || i.url || i.title || i.what;
   const previous = runFiles();
   brief.first_run = !previous.length;   // nothing to diff against: the page skips "since last run"
+  let prevSocial = [];
   if (previous.length) {
     const prev = JSON.parse(readFileSync(join(RUNS, previous.at(-1)), 'utf8'));
+    prevSocial = prev.social || [];
     for (const section of TRACKED) {
       const seen = new Set((prev[section] || []).map(key));
       for (const item of brief[section] || []) {
@@ -76,6 +79,8 @@ export function renderBrief(briefFile, inputsFile) {
       }
     }
   }
+  // Workplace social: always an array, always the same item shape (social.mjs); `new` is against the last run's ids
+  brief.social = normaliseSocial(brief.social, { previous: prevSocial });
   const urgent = (brief.queue || []).filter(q => q.new && q.urgency === 'high');
   if (urgent.length) notify(urgent.length === 1 ? urgent[0].title : `${urgent.length} new urgent items`);
 
