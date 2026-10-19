@@ -22,6 +22,7 @@ async function fromGithub(SINCE) {
   const d = await graphql(`{ me: viewer { login }
   review: search(query: ${q('is:pr is:open review-requested:@me')}, type: ISSUE, first: 30) { nodes { ... on PullRequest {
     number title url createdAt isDraft author { login } repository { name } additions deletions changedFiles
+    reviewRequests(first: 100) { nodes { requestedReviewer { ... on User { login } } } }
     reviews(last: 30) { nodes { author { login } submittedAt } } } } }
   mine: search(query: ${q('is:pr is:open author:@me')}, type: ISSUE, first: 30) { nodes { ... on PullRequest {
     number title url createdAt isDraft reviewDecision repository { name } headRefName body additions deletions changedFiles
@@ -65,6 +66,7 @@ async function fromGithub(SINCE) {
   });
 
   const pbis = nodes(d.issues).flatMap(i => {
+    if (!nodes(i.assignees).some(a => a.login === me)) return [];
     const p = nodes(i.projectItems)[0] || {}, status = p.status?.name || '';
     if (/done/i.test(status) || !(current(p.sprint, today) || /progress|review|block/i.test(status))) return [];
     return [{
@@ -82,7 +84,9 @@ async function fromGithub(SINCE) {
 
   // A re-request after my review is a new wait: count from my last review, not from PR creation.
   // Drafts stay in: an author may park a PR as a draft while it waits on my review. The run decides whether it matters.
-  const review_requests = nodes(d.review).map(p => {
+  const review_requests = nodes(d.review).filter(p =>
+    nodes(p.reviewRequests).some(r => r.requestedReviewer?.login === me)
+  ).map(p => {
     const mine = max(nodes(p.reviews).filter(r => r.author?.login === me).map(r => r.submittedAt));
     const since = max([p.createdAt, mine || p.createdAt]);
     return {

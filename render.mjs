@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { captureSources, captureComplete } from './capture-status.mjs';
 import { OUT, SKILL, WIN, config, tool } from './common.mjs';
 
 // Sections whose items get a "+NEW" flag when they weren't in the previous run ("done": closed since the last run)
@@ -58,9 +59,12 @@ $x = $t.GetElementsByTagName('text'); $x.Item(0).AppendChild($t.CreateTextNode('
 
 export function renderBrief(briefFile, inputsFile) {
   const brief = JSON.parse(readFileSync(briefFile, 'utf8'));
+  let complete = false;
   // The run doesn't copy GitHub's "my work" and review requests into the brief; they come straight from the collector.
   if (inputsFile) {
     const inputs = JSON.parse(readFileSync(inputsFile, 'utf8'));
+    brief.sources = captureSources(inputs);
+    complete = captureComplete(inputs);
     const gh = inputs.github || {};
     brief.work ??= gh.work || [];
     brief.review_requests ??= gh.review_requests || [];
@@ -95,7 +99,7 @@ export function renderBrief(briefFile, inputsFile) {
   for (const f of runFiles()) if (f.slice(0, 8) < c) rmSync(join(RUNS, f));
 
   writePanel(brief);
-  writeFileSync(join(OUT, '.last-run'), brief.generated_at);
+  if (complete) writeFileSync(join(OUT, '.last-run'), brief.generated_at);
   return join(OUT, 'index.html');
 }
 

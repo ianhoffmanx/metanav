@@ -9,9 +9,10 @@
 import { chromium } from 'playwright-core';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROFILE, SKILL as HERE, config, graphql } from './common.mjs';
+import { PROFILE, SKILL as HERE, config, graphql, chromePath } from './common.mjs';
 import { adoStates } from './ado.mjs';
 import { fetchAll } from './fetch.mjs';
+import { openApp, pageForApp, signedIn as sessionSignedIn, connectMicrosoftBrowser } from './microsoft.mjs';
 
 const [SINCE, LOOKBACK, FIRST, PREV, OUT] = process.argv.slice(2);
 const BOTS = config.teams?.skip_chats ?? [];   // bot and reminder chats: not people
@@ -50,15 +51,30 @@ const CALENDAR = `[...new Set([...document.querySelectorAll('[aria-label]')].map
   .filter(l => /(\\d{1,2}:\\d{2} [AP]M to \\d{1,2}:\\d{2} [AP]M|all day)/i.test(l) && !/^\\d{1,2}:\\d{2}/.test(l) && !/\\d+ events?,/.test(l)))]`;
 
 // After a quiet spell Outlook and Teams pass through Microsoft's sign-in page to renew the session and come straight back.
-// Give it 20 seconds; still there means a real sign-in is needed.
+// Interactive renewal (MFA/consent) may take longer; keep the visible, attached browser on the login page long enough
+// for the user to complete it instead of navigating away and restarting the sign-in loop after 20 seconds.
 async function signedIn(page) {
-  for (let i = 0; i < 20 && /login\.microsoftonline\.com/.test(page.url()); i++) await sleep(1000);
-  return !/login\.microsoftonline\.com/.test(page.url());
+  return sessionSignedIn(page);
 }
 
 async function open(page, url) {
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  return signedIn(page);
+  return openApp(page, url);
+}
+
+// Outlook can replace its document after the list appears (for example while renewing the
+// Microsoft session). Retry evaluations interrupted by that navigation instead of losing the
+// whole Outlook collection to a destroyed execution context.
+async function evaluateStable(page, expression, arg) {
+  for (let attempt = 0; ; attempt++) {
+    try { return arg === undefined ? await page.evaluate(expression) : await page.evaluate(expression, arg); }
+    catch (e) {
+      const message = String(e.message || e);
+      if (attempt >= 2 || !/execution context was destroyed|frame was detached|navigation/i.test(message)) throw e;
+      await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+      await sleep(500);
+      if (!await signedIn(page)) return null;
+    }
+  }
 }
 
 // A meeting request's own time ("Thu 8/10/2026 5:30 PM - 8:00 PM") is on a card under its row, which Outlook draws
@@ -67,7 +83,7 @@ const MEETING_TIME = /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}\/\d{1,2}\/\d{4}(?:
 const isMeeting = r => /^(?:\S+ ){0,3}Meeting /.test(r.label || '');
 
 async function meetingTimes(page, ids) {
-  return page.evaluate(async ({ ids, re }) => {
+  return (await evaluateStable(page, async ({ ids, re }) => {
     const rx = new RegExp(re), found = {};
     const sc = document.querySelector('[role=listbox] .customScrollBar') || document.querySelector('[role=listbox]');
     if (sc) sc.scrollTop = 0;   // invites are recent: back to the top, where their rows are drawn
@@ -80,7 +96,7 @@ async function meetingTimes(page, ids) {
       if (Object.keys(found).length < ids.length) await new Promise(r => setTimeout(r, 1000));
     }
     return found;
-  }, { ids, re: MEETING_TIME.source });
+  }, { ids, re: MEETING_TIME.source })) || {};
 }
 
 async function readFolder(page, url) {
@@ -89,8 +105,10 @@ async function readFolder(page, url) {
   // Outlook draws its own page first and only then goes to the sign-in page when the session has passed the
   // organisation's sign-in age - so look again once the list has had its chance, or that reads as an empty folder
   if (!await signedIn(page)) return null;
+  if (!await page.locator('[role=listbox]').count()) throw new Error('Outlook mail list did not load; capture is incomplete');
   await sleep(800);
-  const rows = await page.evaluate(ROWS(SINCE));
+  const rows = await evaluateStable(page, ROWS(SINCE));
+  if (rows === null) return null;
   const invites = rows.filter(isMeeting).map(r => r.convid);
   if (invites.length) {
     const times = await meetingTimes(page, invites);
@@ -103,8 +121,19 @@ async function outlook(page, prev) {
   const mail = { signin_needed: false, folders: {}, calendar: [] };
   const received = config.mail.received_folders;
   for (const f of [...received, { name: 'Sent', url: config.mail.sent }]) {
-    const rows = await timed(`Outlook ${f.name}`, () => readFolder(page, f.url));
-    if (rows === null) { mail.signin_needed = true; return mail; }
+    let rows;
+    try { rows = await timed(`Outlook ${f.name}`, () => readFolder(page, f.url)); }
+    catch (e) {
+      mail.error = String(e.message || e).slice(0, 200);
+      mail.failed_stage = `folder:${f.name}`;
+      return mail; // Preserve folders already captured if a later folder fails.
+    }
+    if (rows === null) {
+      mail.signin_needed = true;
+      mail.signin_stage = `folder:${f.name}`;
+      try { mail.signin_host = new URL(page.url()).hostname; } catch {}
+      return mail;
+    }
     mail.folders[f.name] = rows;
   }
   // A received item from the last run that's missing may be deleted - or the list came back short. Read the received
@@ -120,11 +149,21 @@ async function outlook(page, prev) {
     }
   }
   mail.calendar = await timed('Outlook calendar', async () => {
-    if (!await open(page, 'https://outlook.office.com/calendar/view/day')) return [];
+    if (!await open(page, 'https://outlook.office.com/calendar/view/day')) {
+      mail.signin_needed = true; mail.signin_stage = 'calendar';
+      try { mail.signin_host = new URL(page.url()).hostname; } catch {}
+      return [];
+    }
     await page.waitForFunction(() => [...document.querySelectorAll('[aria-label]')]
       .some(e => / to \d{1,2}:\d{2} [AP]M|all day/i.test(e.getAttribute('aria-label') || '')), null, { timeout: 8000 }).catch(() => {});
-    if (!await signedIn(page)) { mail.signin_needed = true; return []; }   // as for the folders
-    return page.evaluate(CALENDAR);
+    if (!await signedIn(page)) {
+      mail.signin_needed = true; mail.signin_stage = 'calendar';
+      try { mail.signin_host = new URL(page.url()).hostname; } catch {}
+      return [];
+    }
+    const events = await evaluateStable(page, CALENDAR);
+    if (events === null) { mail.signin_needed = true; mail.signin_stage = 'calendar'; }
+    return events || [];
   });
   return mail;
 }
@@ -219,17 +258,21 @@ const fetching = timed('GitHub + Azure DevOps', () => fetchAll(SINCE, LOOKBACK)
   .catch(e => ({ github: { ok: false, error: String(e.message || e).slice(0, 200) }, ado: { ok: false } })));
 
 const out = { collected_at: new Date().toISOString(), since: SINCE, lookback: LOOKBACK, first_run: FIRST === 'yes' };
-let context;
+let context, browser, attached = false;
 try {
-  context = await timed('browser start', () => chromium.launchPersistentContext(PROFILE, { channel: 'chrome', headless: true }));
-  const page = context.pages()[0] || await context.newPage();
+  ({ browser, context } = await timed('browser attach', () => connectMicrosoftBrowser(chromium, PROFILE, chromePath(), config.microsoft_account)));
+  attached = true;
+  const page = await pageForApp(context, 'outlook');
   out.mail = await outlook(page, prev).catch(e => ({ error: String(e.message || e).slice(0, 200) }));
-  out.teams = await teams(page).catch(e => ({ error: String(e.message || e).slice(0, 200) }));
+  const teamsPage = await pageForApp(context, 'teams');
+  out.teams = await teams(teamsPage).catch(e => ({ error: String(e.message || e).slice(0, 200) }));
+  // Sign-in is explicit through the service; collection never launches repeated login windows.
 } catch (e) {
   out.mail = out.mail || { error: String(e.message || e).slice(0, 200) };
   out.teams = out.teams || { error: String(e.message || e).slice(0, 200) };
 } finally {
-  await context?.close().catch(() => {});
+  if (attached) await browser?.close().catch(() => {});   // disconnect; leave the signed-in Chrome profile alive
+  else await context?.close().catch(() => {});
 }
 const fetched = await fetching;
 out.github = fetched.github;
@@ -253,6 +296,11 @@ console.log(JSON.stringify({
   seconds: timings.total, mail_rows: mailRows, calendar: out.mail.calendar?.length ?? 0, teams_conversations: out.teams.conversations?.length ?? 0,
   pr_states: Object.keys(out.pr_states || {}).length, issue_states: Object.keys(out.issue_states || {}).length, github_ok: !!out.github?.ok, ado_ok: !!out.ado?.ok,
   ado_work: out.ado?.work?.length ?? 0, ado_reviews: out.ado?.review_requests?.length ?? 0, ado_mentions: out.ado?.mentions?.length ?? 0,
+  outlook_folders: Object.fromEntries(Object.entries(out.mail.folders || {}).map(([name, rows]) => [name, rows.length])),
+  outlook_signin_stage: out.mail.signin_stage || null, outlook_signin_host: out.mail.signin_host || null,
+  outlook_timings: Object.fromEntries(Object.entries(timings).filter(([name]) => name.startsWith('Outlook '))),
+  visible_browser_fallback: !!out.visible_browser_fallback,
+  attached_to_signed_in_browser: attached,
   outlook_signin_needed: !!out.mail.signin_needed, teams_signin_needed: !!out.teams.signin_needed,
   errors: [out.mail.error && `Outlook: ${out.mail.error}`, out.teams.error && `Teams: ${out.teams.error}`].filter(Boolean),
 }));

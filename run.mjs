@@ -11,6 +11,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { join } from 'node:path';
 import { CONFIG, OUT, SKILL, config, tool } from './common.mjs';
 import { renderBrief, repaint } from './render.mjs';
+import { captureSources, captureComplete } from './capture-status.mjs';
+import { judgePrompt, parseJudgeResult } from './judge-output.mjs';
 
 const RESCAN = process.argv.includes('--rescan');
 const now = new Date();
@@ -51,8 +53,12 @@ const TODAY_PROJECT = (config.schedule || {})[now.toLocaleDateString('en-US', { 
 const DIR = join(OUT, '.inputs');
 mkdirSync(DIR, { recursive: true });
 const INPUTS = join(DIR, 'inputs.json'), BRIEF = join(DIR, 'brief.json');
-const collect = spawnSync(process.execPath, [join(SKILL, 'collect.mjs'), SINCE, LOOKBACK, FIRST, PREV, INPUTS], { encoding: 'utf8', timeout: 5 * 60e3 });
-const collected = `${collect.stdout || ''}${collect.stderr || ''}`.trim();
+// Never let an interrupted run's files masquerade as this run's results.
+for (const file of [INPUTS, BRIEF, join(DIR, 'last-message.txt')]) rmSync(file, { force: true });
+const collect = spawnSync(process.execPath, [join(SKILL, 'collect.mjs'), SINCE, LOOKBACK, FIRST, PREV, INPUTS], { encoding: 'utf8', timeout: 5 * 60e3, windowsHide: true });
+const collected = [`${collect.stdout || ''}${collect.stderr || ''}`.trim(),
+  collect.error && `${collect.error.code || 'spawn error'}: ${collect.error.message}`,
+  collect.signal && `signal: ${collect.signal}`, collect.status === null && !collect.error && 'collector exited without a status'].filter(Boolean).join('\n');
 
 // Judge. The agent reads the inputs, the previous result, the user's clicks and the config, follows JUDGE.md,
 // and writes BRIEF - nothing else: no network, no shell of its own, so it runs with the least access either agent has.
@@ -70,18 +76,27 @@ CONFIG=${CONFIG}
 BRIEF=${BRIEF}
 Write your result to BRIEF and change no other file. Then reply with the summary JUDGE.md asks for.`;
 
-const agent = config.agent || 'claude';
-const model = config.judge_model || '';
+const agent = config.agent || 'codex';
+const model = config.judge_model || 'gpt-6-luna';
 const t0 = Date.now();
 let log;
-if (agent === 'codex') {
-  // workspace-write keeps its writes inside .inputs; the user's own Codex config (MCP servers, rules) and hooks aren't
-  // loaded - hooks.json isn't covered by --ignore-user-config, and a hook waiting on a person would hang the run
+if (collect.status !== 0 || !existsSync(INPUTS)) {
+  log = { agent, model: model || 'default', is_error: true, result: 'Collection failed; the previous panel has been preserved.', collector_error: collected };
+} else if (agent === 'codex') {
+  // Run unattended without approval prompts. The user's Codex config (MCP servers, rules) and hooks aren't loaded;
+  // hooks.json isn't covered by --ignore-user-config, and a hook waiting on a person would hang the run.
   const last = join(DIR, 'last-message.txt');
+  const supplied = judgePrompt({
+    instructions: read(join(SKILL, 'JUDGE.md')),
+    inputs: JSON.parse(read(INPUTS)), previous: PREV ? JSON.parse(read(PREV)) : null,
+    state: JSON.parse(read(join(OUT, 'state.json')) || '{}'), config,
+    facts: { SINCE, LOOKBACK, FIRST, TODAY_PROJECT, now: now.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+  });
   const r = tool('codex', ['exec', '--json', '--ignore-user-config', '--disable', 'hooks', '--skip-git-repo-check', '--ephemeral',
-    '--sandbox', 'workspace-write', '--cd', DIR, '-c', 'model_reasoning_effort=high',
+    '--sandbox', 'read-only', '--cd', DIR, '-c', 'model_reasoning_effort=high',
+    '--output-schema', join(SKILL, 'judge-output.schema.json'),
     ...(model && !/^(opus|sonnet|haiku|claude)/.test(model) ? ['--model', model] : []),
-    '--output-last-message', last, '-'], { cwd: DIR, input: prompt, timeout: 20 * 60e3 });
+    '--output-last-message', last, '-'], { cwd: DIR, input: supplied, timeout: 10 * 60e3 });
   // token use, from each turn's usage event, so a run's cost can be worked out (Claude Code reports its own)
   const usage = {};
   for (const line of (r.stdout || '').split('\n')) {
@@ -89,6 +104,13 @@ if (agent === 'codex') {
     if (e.type === 'turn.completed') for (const [k, v] of Object.entries(e.usage || {})) usage[k] = (usage[k] || 0) + v;
   }
   log = { agent, model: model || 'default', is_error: r.status !== 0, result: read(last) || (r.stderr || '').slice(-4000), usage };
+  if (!log.is_error) {
+    try {
+      const result = parseJudgeResult(read(last));
+      writeFileSync(BRIEF, JSON.stringify(result.brief));
+      log.result = result.summary;
+    } catch (e) { log.is_error = true; log.result = 'Judge output rejected: ' + String(e.message || e); }
+  }
 } else {
   // Only Read and Write: no MCP servers (--strict-mcp-config with none given), no shell, no other tool
   const r = tool('claude', ['-p', '--model', model || 'opus', '--strict-mcp-config',
@@ -103,10 +125,18 @@ log.collect = collected;
 // stale once it's over 90 minutes old.
 let brief = null;
 try { brief = JSON.parse(readFileSync(BRIEF, 'utf8')); } catch (e) { log.is_error = true; log.brief_error = String(e.message || e); }
-if (brief) {
+if (brief && !log.is_error) {
   try { renderBrief(BRIEF, INPUTS); } catch (e) { log.is_error = true; log.render_error = String(e.stack || e).slice(0, 2000); }
 }
 if (/"syncing":\s*true/.test(read(join(OUT, 'index.html')))) repaint(false);
+if (existsSync(INPUTS)) {
+  try {
+    const inputs = JSON.parse(read(INPUTS));
+    log.sources = captureSources(inputs);
+    log.collection_complete = captureComplete(inputs);
+    if (!log.collection_complete) log.is_error = true;
+  } catch (e) { log.is_error = true; log.collection_error = String(e.message || e); }
+}
 
 writeFileSync(join(OUT, 'logs', `${stamp}${RESCAN ? '-rescan' : ''}.json`), JSON.stringify(log, null, 1));
 

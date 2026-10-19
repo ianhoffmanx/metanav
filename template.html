@@ -705,6 +705,22 @@ document.addEventListener('click', async ev => {
   signinSaid[src] = said;
   render();
   if (said.startsWith('BUSY')) setTimeout(() => { delete signinSaid[src]; render(); }, 60e3);
+  if (!said.startsWith('BUSY') && !said.startsWith('HELPER')) {
+    const deadline = Date.now() + 610e3;
+    const check = async () => {
+      try {
+        const r = await fetch(STATE_URL.replace(/state$/, 'status'), { method: 'POST', body: '{}', signal: AbortSignal.timeout(5000) });
+        if (!r.ok) throw new Error('Status unavailable');
+        const s = await r.json();
+        if (s.signin?.status === 'ready' && s.running) signinSaid[src] = 'SIGNED IN · SYNCING';
+        if (!s.signing?.length && !s.running) { delete signinSaid[src]; render(); return; }
+        render();
+      } catch { delete signinSaid[src]; render(); return; }
+      if (Date.now() < deadline) setTimeout(check, 3000);
+      else { delete signinSaid[src]; render(); }
+    };
+    setTimeout(check, 3000);
+  }
 });
 
 // The objective tracker shows the nearest dated promise ("Tue 29/9" — day/month), like "Days until Expulsion: 5".

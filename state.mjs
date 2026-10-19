@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { appOf, devtoolsEndpoint, recognizedApps } from './microsoft.mjs';
 import { join } from 'node:path';
 import { OUT, PROFILE, SKILL, chromePath, tool } from './common.mjs';
 
@@ -53,34 +54,50 @@ setInterval(() => {
   if (!existsSync(join(OUT, '.running')) && !signing.has('microsoft')) start(false);
 }, 30e3);
 
-// Outlook's mail page is titled "Mail - <name> - Outlook", and Teams "<view> | Microsoft Teams", only once you're past
-// the sign-in (Teams' own loading page is just "Microsoft Teams")
-async function signedIn(port) {
-  try {
-    const titles = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter(p => p.type === 'page').map(p => p.title || '');
-    return titles.some(t => t.startsWith('Mail - ')) && titles.some(t => t.endsWith('| Microsoft Teams'));
-  } catch { return false; }
-}
 
 // A visible window on the runs' own profile, at Outlook and Teams: a new profile may have to pick the account for
-// Teams once, which a headless run can't. Once both have loaded, give the cookies a moment, close the window - the
-// next run needs the profile - and refresh. A plain Chrome, not an automated one: sign-in pages can refuse those.
+// Teams once. Keep regular Chrome open for collection to reuse its authenticated tabs and proxy origins.
 async function signInMicrosoft() {
   const chrome = chromePath();
-  if (!chrome) return false;
+  if (!chrome) throw new Error('Google Chrome was not found');
   mkdirSync(PROFILE, { recursive: true });
-  rmSync(join(PROFILE, 'DevToolsActivePort'), { force: true });
-  const p = spawn(chrome, [`--user-data-dir=${PROFILE}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
-    'https://outlook.office.com/mail/', 'https://teams.microsoft.com/v2/'], { stdio: 'ignore' });
-  let open = true, ok = false;
-  p.on('exit', () => { open = false; });
-  for (const deadline = Date.now() + 600e3; open && Date.now() < deadline;) {
-    await sleep(2000);
-    const portFile = join(PROFILE, 'DevToolsActivePort');
-    if (existsSync(portFile) && await signedIn(readFileSync(portFile, 'utf8').split(/\r?\n/)[0].trim())) { ok = true; await sleep(4000); break; }
+  let endpoint = devtoolsEndpoint(PROFILE);
+  let pages = [];
+  if (endpoint) {
+    try { pages = await (await fetch(endpoint + '/json', { signal: AbortSignal.timeout(3000) })).json(); }
+    catch { endpoint = ''; }
   }
-  if (open) { p.kill(); await new Promise(r => { p.once('exit', r); setTimeout(r, 15000); }); }
-  return ok;
+  const report = (status, apps = {}) => write(join(OUT, 'signin-status.json'), JSON.stringify({ status, apps, at: new Date().toISOString() }));
+  report('waiting', recognizedApps(pages));
+  if (endpoint) {
+    // Reuse the live profile. Deleting its port file or trusting a second Chrome
+    // launch's exit loses the browser that actually owns the signed-in session.
+    for (const [app, url] of [['outlook', 'https://outlook.office.com/mail/inbox'], ['teams', 'https://teams.microsoft.com/v2/']]) {
+      if (!pages.some(p => p.type === 'page' && appOf(p.url) === app)) {
+        await fetch(endpoint + '/json/new?' + encodeURI(url), { method: 'PUT', signal: AbortSignal.timeout(5000) });
+      }
+    }
+  } else {
+    const child = spawn(chrome, [`--user-data-dir=${PROFILE}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
+      'https://outlook.office.com/mail/inbox', 'https://teams.microsoft.com/v2/'], { detached: true, stdio: 'ignore' });
+    child.on('error', e => report('error', { message: e.message }));
+    child.unref();
+  }
+  for (const deadline = Date.now() + 600e3; Date.now() < deadline;) {
+    await sleep(2000);
+    endpoint = devtoolsEndpoint(PROFILE);
+    if (!endpoint) continue;
+    try {
+      pages = await (await fetch(endpoint + '/json', { signal: AbortSignal.timeout(3000) })).json();
+      const apps = recognizedApps(pages);
+      report('waiting', apps);
+      if (apps.outlook && apps.teams) { report('ready', apps); return true; }
+    } catch {}
+  }
+  report('timed_out', recognizedApps(pages));
+  // Authentication is interactive. Leave the window open instead of destroying
+  // the user's session; another SIGN IN resumes watching the same browser.
+  return false;
 }
 
 // az login opens the browser itself. BROWSER=open on macOS: its default way is AppleScript, which macOS stops when it
@@ -98,6 +115,7 @@ function signIn(source) {
   signing.add(what);
   (async () => {
     try { if (await (what === 'azure' ? signInAzure() : signInMicrosoft())) refresh(); }
+    catch (e) { write(join(OUT, 'signin-status.json'), JSON.stringify({ status: 'error', message: String(e.message || e), at: new Date().toISOString() })); }
     finally { signing.delete(what); }
   })();
   return 'started';
@@ -112,7 +130,7 @@ function reply(res, status, obj) {
 const server = createServer((req, res) => {
   // Only the panel itself may call in: a page on disk sends Origin "null"; a website open in the same browser sends its
   // own origin. The Host check keeps out DNS-rebinding tricks.
-  if (req.method !== 'POST' || !['/state', '/signin', '/refresh'].includes(req.url) || (req.headers.origin ?? 'null') !== 'null'
+  if (req.method !== 'POST' || !['/state', '/signin', '/refresh', '/status'].includes(req.url) || (req.headers.origin ?? 'null') !== 'null'
     || ![`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host)) return reply(res, 403);
   let raw = '';
   req.on('data', c => { raw += c; if (raw.length > 1 << 22) req.destroy(); });
@@ -124,6 +142,11 @@ const server = createServer((req, res) => {
       if (req.url === '/state' && (!KEYS.includes(body.key) || typeof body.value !== 'object' || !body.value || Array.isArray(body.value))) throw 0;
     } catch { return reply(res, 400); }
     if (req.url === '/signin') return reply(res, 200, { status: signIn(body.source) });
+    if (req.url === '/status') {
+      let signin = null;
+      try { signin = JSON.parse(readFileSync(join(OUT, 'signin-status.json'), 'utf8')); } catch {}
+      return reply(res, 200, { running: existsSync(join(OUT, '.running')), signing: [...signing], signin });
+    }
     if (req.url === '/refresh') {
       // one run at a time, and not while a sign-in window holds the browser profile
       const busy = existsSync(join(OUT, '.running')) || signing.has('microsoft');
