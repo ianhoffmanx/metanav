@@ -128,6 +128,14 @@ Links and identity for mail items:
 
 Each label is `Title, 9:30 AM to 9:45 AM, Friday, September 25, 2026, [location], By <organizer>, Busy, [Recurring event]`. Convert to 24h `HH:MM`. Drop `Canceled` / `Declined` events, other people's leave / out-of-office notices (shown as `Free`, organised by someone else), and personal blocks (titles containing an entry of `config.calendar.skip_events`). The whole day goes in `calendar` every run; it's what 5c ranks the queue around.
 
+### 3c. Graph calendar — `graph`
+
+When Ian has signed Meta-Nav in to Microsoft Graph, `graph.ok` is true and `graph.calendar[]` is his real calendar read directly from Microsoft, from two days back to seven days ahead: `{id, subject, start, end, all_day, cancelled, location, organizer, show_as, response, online_url, url, preview}`. `start` and `end` are his wall-clock time in `graph.timezone` (`2026-10-21T10:00:00`; an all-day entry is just its date). This is more reliable than `mail.calendar` (today only, read off the page), so prefer it, but it adds no new kind of ask.
+- **`social`:** a birthday morning tea, farewell drinks or team lunch on the calendar is a `social` item (`id` `cal:<id>`, `url` the entry's `url`, `where` its `location`, `detail` from `preview` if it says anything). Skip `cancelled` entries; an entry already in `social` as an invite or Teams post is the same occasion — keep one.
+- **Meetings:** prep and follow-up rules are unchanged — only an agenda, an ask or a promise creates work. A meeting later in the week with a clear agenda in `preview` can justify a prep row; its date is the `due`.
+- **Today's `calendar` section:** keep building it from `mail.calendar`. Only when that list is empty or failed and `graph.ok` is true, fill it from today's `graph.calendar` entries (`start`/`end` as `HH:MM`, `all_day`, not cancelled).
+- **If `graph.ok` is false** (`graph.skipped` — not signed in — or `graph.error`), ignore it: it is not one of the four sources, never goes in `sources`, and is never evidence that anything is missing.
+
 ## Step 4: Teams — `teams`
 
 The collector reads Teams' own cache (IndexedDB), with `teams-extract.js`, once it has caught up — no network call of its own, no chat opened, nothing marked read. `teams.signin_needed` is handled like Outlook's (step 3); `teams.error` → `ok: false` with a short note.

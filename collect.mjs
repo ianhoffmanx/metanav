@@ -15,6 +15,7 @@ import { fetchAll } from './fetch.mjs';
 import { withDeadline } from './deadline.mjs';
 import { marketingPrevious, inGithubScope } from './marketing.mjs';
 import { SOCIAL_WORDS } from './social.mjs';
+import { graphInputs } from './graph.mjs';
 import { openApp, pageForApp, signedIn as sessionSignedIn, connectMicrosoftBrowser } from './microsoft.mjs';
 
 const [SINCE, LOOKBACK, FIRST, PREV, OUT] = process.argv.slice(2);
@@ -291,6 +292,9 @@ try {
 const fetched = await fetching;
 out.github = fetched.github;
 out.ado = fetched.ado;
+// Direct Microsoft Graph calendar (delegated, read-only) when `node graph.mjs login` has been done; otherwise skipped. It
+// never fails a run: its state is in `graph`, and none of the four sources depends on it.
+out.graph = await withDeadline(graphInputs(), 20000, 'Graph calendar').catch(e => ({ ok: false, error: String(e.message || e).slice(0, 200) }));
 out.pr_states = await timed('PR states', () => prStates(prev, out.mail, out.teams, out.github || {}));
 out.issue_states = await timed('issue states', () => issueStates(prev, out.github || {}));
 // Azure DevOps work items and PRs carried over from the last run that aren't in this run's lists, the same way
@@ -309,6 +313,7 @@ const mailRows = Object.values(out.mail.folders || {}).reduce((n, r) => n + r.le
 console.log(JSON.stringify({
   browser_mode: config.browser?.headless ? 'headless' : 'visible', seconds: timings.total, mail_rows: mailRows, calendar: out.mail.calendar?.length ?? 0, teams_conversations: out.teams.conversations?.length ?? 0,
   pr_states: Object.keys(out.pr_states || {}).length, issue_states: Object.keys(out.issue_states || {}).length, github_ok: !!out.github?.ok, ado_ok: !!out.ado?.ok,
+  graph_calendar: out.graph?.ok ? out.graph.calendar.length : (out.graph?.skipped ? 'not signed in' : 'error'),
   ado_work: out.ado?.work?.length ?? 0, ado_reviews: out.ado?.review_requests?.length ?? 0, ado_mentions: out.ado?.mentions?.length ?? 0,
   outlook_folders: Object.fromEntries(Object.entries(out.mail.folders || {}).map(([name, rows]) => [name, rows.length])),
   outlook_signin_stage: out.mail.signin_stage || null, outlook_signin_host: out.mail.signin_host || null,
