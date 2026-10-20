@@ -1,20 +1,19 @@
 # How Meta-Nav works
 
-Meta-Nav is one page that answers **"what should I do now?"** It reads your Outlook mail and calendar, your Teams chats, GitHub and (optionally) one Azure DevOps pipeline. An AI judges what's yours to do, what others owe you and what's worth knowing, ranks your to-dos by the cost of delay, and writes it all into a local page styled after Persona 5.
+Meta-Nav is one page that answers **"what should I do now?"** It reads your Outlook mail and calendar, your Teams chats, GitHub and (optionally) Azure DevOps. An AI judges what's yours to do, what others owe you and what's worth knowing, ranks your to-dos by the cost of delay, and writes it all into a local page styled after Persona 5.
 
-This document follows one refresh from start to finish, then explains each part of the page. `README.md` covers what you need and what it costs; `INSTALL.md` sets it up; `SKILL.md` holds the exact instructions the AI follows.
+This document follows one refresh from start to finish, then explains each part of the page. `INSTALL.md` sets it up; `JUDGE.md` holds the exact instructions the AI follows.
 
 ```
-  launchd, hourly ─┐
-  SYNC NOW / metanav ─┤
-                   ▼
-  1. Collect   collect.mjs + fetch.sh       ~25 s, no AI
+  the hour, SYNC NOW, or metanav
+                   ▼   run.mjs runs these steps
+  1. Collect   collect.mjs + fetch.mjs      ~25 s, no AI
                Outlook · Calendar · Teams · GitHub · Azure DevOps  →  inputs.json
                    ▼
-  2. Judge     claude -p /metanav (Opus)     ~2–4 min
+  2. Judge     Claude Code or Codex, JUDGE.md  ~2–10 min
                inputs + the previous run + your clicks  →  brief.json
                    ▼
-  3. Render    render.py                     →  index.html, stamp.js, runs/<time>.json
+  3. Render    render.mjs                    →  index.html, stamp.js, runs/<time>.json
                    ▼
   4. The page  reloads itself; your clicks go to state.json and into the next run
 ```
@@ -23,7 +22,7 @@ This document follows one refresh from start to finish, then explains each part 
 
 ## 1. When it refreshes
 
-- **On a schedule.** A launchd job fires on the hour. `run.sh` only goes ahead on weekdays within `hours` in `config.json` (9:00 to 18:00 by default). If your Mac was asleep on the hour, launchd runs it when the Mac wakes.
+- **On a schedule.** Meta-Nav's background service (`state.mjs`, started at login by launchd on macOS or Task Scheduler on Windows) starts a run on the hour. `run.mjs` only goes ahead on weekdays within `hours` in `config.json` (9:00 to 18:00 by default). If the computer was asleep on the hour, the run starts as soon as it wakes.
 - **On demand, at any hour.** Use the **SYNC NOW** button on the page, or type `metanav` in a terminal.
 - **One at a time.** A lock stops two runs overlapping. While a run works, the page shows **Syncing**.
 - **Incremental.** Each run starts from the previous run's judgement. It re-checks everything that was still open, and reads only what's new since the last run. The very first run reads the last 30 days (`lookback_days`), so an ask nobody answered three weeks ago still turns up.
@@ -31,7 +30,7 @@ This document follows one refresh from start to finish, then explains each part 
 
 ## 2. Collecting the data (no AI involved)
 
-`collect.mjs` reads everything in about 25 seconds and writes one file, `inputs.json`. Outlook and Teams are read in a headless Chrome that has its own profile, where you signed in once.
+`collect.mjs` writes one file, `inputs.json`. Collection on Windows can take several minutes. Outlook and Teams use a regular Chrome window on Meta-Nav's own profile; the window stays open so collection can reuse its signed-in application tabs and Defender proxy origins. A bounded check closes frozen or duplicate application tabs before attaching, while keeping the profile and healthy tabs.
 
 | Source | What's read | What's never done |
 | --- | --- | --- |
@@ -39,13 +38,13 @@ This document follows one refresh from start to finish, then explains each part 
 | **Outlook calendar** | Today's day view: each meeting's title and time. | Cancelled and declined meetings, other people's leave, and the personal blocks you list are dropped. |
 | **Teams** | Teams on the web keeps recent chats in its own browser cache. Meta-Nav reads that cache: direct chats, group chats and meeting chats with something new since the last run. Where you took part, it also takes the last 30 days of history for context. | No API calls and no chat opened, so nothing is marked read. Channels aren't read. Bot and reminder chats you list are skipped. |
 | **GitHub** (`gh`) | PRs waiting for your review, with their size and how long they've waited. Your open PRs: review state, CI, unresolved threads and new feedback. Your issues on the current sprint board, with body, comments, assignees, sprint end and when they were assigned to you. Where someone @mentioned you, and whether you've answered. The current state of any PR or issue the panel is already tracking. | Nothing is written to GitHub. |
-| **Azure DevOps** (optional, `az`) | The latest release of one pipeline, stage by stage. | — |
+| **Azure DevOps** (optional, `az`) | The same as GitHub, across your organisation: work items assigned to you that are under way, pull requests waiting on your review, your own PRs' votes, comments, build checks and conflicts, and work item discussions that @mention you. Optionally the latest release of one pipeline, stage by stage. | Nothing is written to Azure DevOps. A mention in a PR comment arrives as notification mail instead. |
 
 If Microsoft asks you to sign in again, that source is marked failed and the page shows a red banner with a **SIGN IN** button (section 5).
 
 ## 3. Judging (the AI)
 
-Claude (Opus by default, `judge_model` in `config.json`) reads the inputs, the previous run's result and your clicks. It sorts everything into four lists:
+The judge — Claude Code (Opus by default) or Codex, set by `agent` and `judge_model` in `config.json` — reads the inputs, the previous run's result and your clicks. It can only read files and write its one result file: no network, no shell. It sorts everything into four lists:
 
 | List | On the page | What goes in |
 | --- | --- | --- |
@@ -91,7 +90,7 @@ Six principles decide where things go:
    - Work a meeting needs moves up before that meeting.
    - A short gap before the next meeting suits a quick item; a long free stretch suits a big one.
 
-A new item that costs something *today* is marked urgent and triggers a macOS notification. This is used sparingly.
+A new item that costs something *today* is marked urgent and triggers a desktop notification. This is used sparingly.
 
 **Every ranking is written down.** Each run stores, in `runs/<time>.json`:
 - a `cost` sentence for every to-do;
@@ -101,7 +100,7 @@ The page doesn't show these. When the order looks wrong, they tell you which rul
 
 ## 5. The page, section by section
 
-**Header.** It shows today's date and time of day, when the data was last synced, and **SYNC NOW**. A red banner appears when a source failed. When the cause is an expired sign-in, the banner has a **SIGN IN** button: it opens a Chrome window on Outlook and Teams, closes it once you're in, and refreshes.
+**Header.** It shows today's date and time of day, when the data was last synced, and **SYNC NOW**. A red banner appears when a source failed. When the cause is an expired sign-in, the banner has a **SIGN IN** button: it opens a Chrome window on Outlook and Teams, leaves the signed-in window open, and refreshes. The sign-in status is updated from each collection; a check older than 90 minutes is labelled stale. Collection or judge failures also raise a Windows toast and retain the previous panel with a warning.
 
 **Target: do this now.** The top of the ranked list, as a large card. It shows:
 - why it's first (the red tag);
@@ -132,14 +131,14 @@ Click a bar to open it:
 
 ## 6. Your clicks
 
-- **What gets saved.** ✓ (done), Resolved and Got it are saved by a small local service (`state.py`, on `127.0.0.1` only) into `state.json`. Every browser on your Mac sees the same clicks.
+- **What gets saved.** ✓ (done), Resolved and Got it are saved by the same background service (`state.mjs`, on `127.0.0.1` only) into `state.json`. Every browser on your computer sees the same clicks.
 - **Ticked means closed.** The next run treats a ticked item as closed. If something new happens on it later, it comes back.
 - **Deleting received mail counts as done.** Archiving it does too.
 
 ## 7. Privacy and files
 
 - **Read-only.** Nothing is sent, opened or marked read anywhere.
-- **Everything stays on your Mac.** The collected mail and chats (`inputs.json`) are deleted at the end of every run.
+- **Local by default.** The separately installed Hermes exporter can send encrypted run results to the user's own receiver. The collected mail and chats (`inputs.json`) are deleted at the end of every run.
 
 | Where | What |
 | --- | --- |
@@ -147,8 +146,8 @@ Click a bar to open it:
 | `~/metanav/runs/` | Each run's result, including `cost` and `tradeoffs`, kept 14 days. The next run starts from the newest. |
 | `~/metanav/logs/` | Each run's log, kept 7 days. `result` is the run's own summary. |
 | `~/metanav/state.json` | Your clicks. |
-| `~/Library/Caches/metanav/` | Meta-Nav's own Chrome profile, with your Microsoft sign-in. |
-| `~/.claude/skills/metanav/` | The skill: `SKILL.md` (the AI's instructions), `config.json`, and the scripts. |
+| `~/Library/Caches/metanav/` (Windows: `%LOCALAPPDATA%\metanav\`) | Meta-Nav's own Chrome profile, with your Microsoft sign-in. |
+| `~/.claude/skills/metanav/` (or `~/.agents/skills/metanav/` with Codex) | The skill: `run.mjs` (the runner), `JUDGE.md` (the judge's instructions), `config.json`, and the scripts. |
 
 ## 8. When something looks off
 
@@ -159,3 +158,25 @@ Click a bar to open it:
 | Something finished is still listed | Tick it. Runs only close what the data shows, so a reply in a system Meta-Nav doesn't read won't close it. |
 | Something is missing | Runs judge again from scratch each time. `metanav` refreshes now; the run's summary in the log lists what it saw. |
 | Dates or times look wrong | Outlook on the web must be in English, with a day/month/year date format and a 12-hour clock. |
+
+## Marketing configuration
+
+With `config.marketing` enabled, the existing judge and panel focus on asks, promises, approvals,
+meeting prep and follow-up, content deadlines and waiting on people. `queue.who` identifies the
+asker, `due` is evidenced or null, and GitHub approvals are framed as content reviews. CI, file
+counts and review-thread counts do not rank marketing work; a publication blocker still surfaces.
+
+`ado.base_url`, `team`, `project_only`, `current_iteration_only` and `read_prs: false` constrain
+Azure DevOps to the user's assigned marketing sprint work. Sprint dates come from the team API.
+`marketing.github` lists allowed organisations, content repositories and excluded side projects.
+Source health and the source-health part of each log summary are determined by code, not the judge.
+See `docs/windows-marketing-maintenance.md` for the reconciliation and validation record.
+
+### Workplace social
+
+Each run also lists workplace social - birthdays, anniversaries, new starters, farewells, social events and
+personal news - from the last two days to the next seven, as a `social` array in `runs/*.json` (empty when there
+is none). It comes from what is already collected: Outlook mail and invites (including the monthly SSW Times staff
+update), Teams chats, and social-looking posts in Teams channels (the only channel messages the collector keeps).
+It is not part of the Requests, Waiting On or Phan-Site lists and never changes them. `social.mjs` fixes the shape:
+`{id, kind, title, who, when, where, detail, url, new}`, with `new` set by the runner against the previous run.

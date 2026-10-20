@@ -5,6 +5,7 @@ async () => {
   const ACTIVE = Date.parse('__ACTIVE_SINCE__');  // skip conversations silent since then: same as SINCE, or LOOKBACK on a first run
   const LOOKBACK = Date.parse('__LOOKBACK__');    // config.lookback_days back: how far open loops reach
   const MAX_PER_CONV = 40;
+  const SOCIAL = new RegExp(__SOCIAL__, 'i');     // channels: only birthday / welcome / farewell / social posts get through
 
   const dbs = await indexedDB.databases();
   const open = (re) => new Promise((resolve, reject) => {
@@ -56,9 +57,10 @@ async () => {
     const id = rc.conversationId;
     const conv = byId[id] || {};
     const kind = kindOf(id, conv);
-    if (kind === 'channel') continue;   // channels aren't read: asks and news reach the user in chats and mail
-    const msgs = usable(rc);
-    const mine = chatsWithMe.has(id);
+    // Channels aren't read for asks - those reach the user in chats and mail - but workplace social is posted there:
+    // from a channel, keep only recent messages that look social
+    const msgs = kind === 'channel' ? usable(rc).filter(m => SOCIAL.test(text(m.content))) : usable(rc);
+    const mine = kind !== 'channel' && chatsWithMe.has(id);
     const keep = mine ? msgs : msgs.filter(m => m.originalArrivalTime >= SINCE);
     if (!keep.length) continue;
 

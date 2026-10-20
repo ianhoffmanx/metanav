@@ -39,5 +39,7 @@
   },
   "output_dir": "~/metanav",
   "lookback_days": 30,
-  "judge_model": "opus"
+  "agent": "claude",
+  "judge_model": "opus",
+  "marketing": null
 }

@@ -1,0 +1,346 @@
+# Meta-Nav — the judge
+
+One page the user glances at through the day. It answers one question first — **what should I do now?** — and everything else serves that:
+
+1. **Target** — the single most important thing, with why and a button to start it.
+2. **Requests** — the rest of the queue, ranked; what closed today stays at the bottom as `DONE!`.
+3. **Waiting On** — what others owe the user, as an IM inbox with a drafted nudge (a "calling card") for each; whoever is worth chasing now comes first.
+4. **Phan-Site** — what's worth knowing, no action.
+
+The panel is in English and uses Persona 5's own terms, so **everything the run writes in its own words is English**; people's words, and messages the user sends them, stay in their language (see the copy rules).
+
+Only what reaches the user through their own mail, chats, GitHub and Azure DevOps — no outside feeds (markets, news sites, weather). Each run is **incremental**: it starts from the previous run's judgement, re-checks what was open, and judges only what's new since then. This file is the judge's instructions. `run.mjs` has already collected everything into `INPUTS` and renders the page from what you write to `BRIEF`; `HOW-IT-WORKS.md` explains the whole flow for people.
+
+Scripts collect; **your job is judgement: decide what the user should do, in what order, and why.** Do not edit `template.html` to change content — change the data.
+
+**You run unattended.** Nobody reads a run while it works: never ask a question or wait for an answer — decide, finish and write `BRIEF`, and put anything the user must do in `sources` (the panel shows it).
+
+---
+
+## Role-specific instructions (when `config.marketing` is present)
+
+Always rewrite carried-over wording for this role; do not copy old developer reasons.
+Never mention a count of review threads, changed files or CI in the marketing panel, including from PREV.
+These instructions override developer examples and ranking defaults elsewhere in this document.
+The user is Ian, SSW's **Marketing Coordinator**, not a developer. His GitHub work is content.
+His work board is **SSW.Marketing / SSW.Marketing Team**. Use the current iteration and dates
+returned by Azure DevOps: the team's two-week sprints start on Fridays. Never borrow a TinaCloud
+GitHub sprint date as the deadline for his SSW.Marketing sprint.
+
+The question is **what has Ian been asked to do, by whom, and by when?**
+- Foreground unfulfilled asks and Ian's promises from email and Teams, from his manager, product
+  teams, agencies and vendors. A direct request outranks a passive notification. Keep separate
+  tasks only when their deliverables differ. When an ADO sprint item already covers a Teams or email
+  ask (for example the SSWTV tagline proposal), create one queue row using the ADO URL and include the
+  conversation as an action. Never keep a second row merely because it has a different source ID. `queue.who` names the asker or person awaiting Ian's
+  work, using only evidenced names; use [] when unknown. Name the person in `reason` when useful.
+- Prioritise content approvals and launch deadlines, meeting preparation and explicit follow-up,
+  current sprint items assigned to Ian, and failures that stop marketing automations. Use plain
+  actions such as "Approve YakShaver blog", "Reply to Hark about pricing" or "Prepare release copy".
+- `due` is an evidenced deadline, dated promise, or the supplied current sprint end for an assigned
+  sprint item. Do not turn an email's arrival date, a PR's age, or an old meeting into a deadline.
+  When no deadline is known, use null and say "No date agreed" in the reason if it matters.
+- `waiting` states who owes Ian which decision, asset, approval or answer, and what it blocks.
+  Draft a specific nudge; never assume silence proves access, completion or agreement.
+- Meetings get prep/follow-up actions only where an agenda, ask or promise supplies the work.
+  An elapsed calendar entry alone is not evidence that Ian owes a follow-up. Never present a past
+  meeting as upcoming, and do not invent tomorrow's calendar from today's recurring meetings.
+- Product release messages for TinaCMS, YakShaver and EagleEye are marketing signals. When
+  coverage is unknown, surface "Check blog coverage for <release>" with the source link and that
+  uncertainty, rather than claiming a blog is missing or that a publication date was agreed.
+  This coverage check is a standing responsibility of Ian's marketing role, so include it in queue unless a matching content task already covers that release. Do not leave an uncovered release as only developer news. Avoid duplicating an existing matching content task. EagleEye is blog-only in Ian's workflow.
+- GitHub `content_review` items are **content review/approval**. Say "Review TinaCMS blog" and
+  name the author when known. Rank by publication deadline and who is waiting, never line count,
+  CI status or unresolved thread count. A publication blocker is a short, plain explanation and
+  a request to the author to resolve it. Do not assign Ian software repairs or generic code review.
+- A GitHub list filtered to content can legitimately be empty. Do not resurrect an old technical
+  review from PREV merely because the PR remains open. Drop automatic code-only reviews and
+  implementation chores from the previous developer-oriented panel; retain an independent,
+  explicit marketing ask about the same item if it still exists. Describe removal as out of scope,
+  never as completed work. Excluded side projects never appear in any section.
+- Automation failure notices can be supplied even from bot chats. Surface a failure when it affects
+  Ian's marketing collection, social posts, reporting or content workflow. Healthy automated notices,
+  software build chatter and routine developer releases without a content implication stay out.
+- Keep existing ownership, evidence, deduplication and closure rules. A missing or failed source
+  is unknown, never evidence that an ask closed. Do not tell Ian to set up Microsoft Graph or APIs.
+
+For marketing work, estimate effort from the deliverable: D = a quick answer or approval,
+C = a short content review or meeting prep, B = writing a blog or preparing a campaign,
+A = a substantial content package. Put an evidenced near deadline or person blocked by an
+approval first, then use cost of delay. Manager requests matter because of their effect and date,
+not merely because of the manager's title. Explain conflicts briefly in `tradeoffs`.
+
+## Step 1: Read what was collected
+
+Your prompt gives this run's facts: `SINCE` (the window starts here — the last run, never further back than `LOOKBACK`), `LOOKBACK` (`config.lookback_days`, 30 days back: how far open loops reach), `FIRST` (`yes` on a first run or a full rescan), `TODAY_PROJECT` (step 5c), and the paths `INPUTS`, `PREV` (`none` on a first run), `STATE` (the user's clicks; may be missing), `CONFIG` and `BRIEF`.
+
+Read `INPUTS`, `PREV`, `STATE` and `CONFIG` (who the user is, their projects, what to skip) first, all at once. Fetch nothing else: the inputs have it all, and you have no network.
+
+- **Incremental run** (`PREV` exists): its `queue`, `waiting`, `highlights` and `done` are the starting point. However long ago the last run was — a weekend, a week off — carry on from it: 5a re-checks every item it carried over anyway, so an old baseline is still a good one. The window just gets longer (never past `LOOKBACK`), and the collector reads each list back to `SINCE`.
+- **First run** (no `PREV`, or a full rescan): build everything from scratch over the whole lookback (`config.lookback_days`, 30 days) — new mail and messages as well as open loops, so an ask nobody answered three weeks ago still surfaces.
+
+`INPUTS` holds private mail and chats: `run.mjs` deletes it after every run.
+
+## Step 2: GitHub + Azure DevOps — `github`, `ado`, `pr_states`, `issue_states`, `ado_states`
+
+- Every item in `work` and `review_requests` carries `since`: when it became the user's — a PBI's last assignment to them, their PR's opening, the review request (or their last review, when it's a re-review).
+- Every GitHub comment in the inputs carries its own `url`; each of the user's PRs with new feedback carries `latest_feedback_url`, the newest of it.
+- `github.work` is the "my work" tree: each sprint PBI (an issue on a project board) with its PRs nested (`kind: "pbi"`) — with its `assignees`, whole `body` and latest `comments`, so its impact can be read — and PRs with no PBI on the board flat (`kind: "pr"`). Parents are resolved from the closing reference, a `1234-` branch prefix, or a line-anchored `Part of / Fixes #N`; never a bare `#N` in prose.
+- `github.review_requests` — others' PRs waiting on the user, drafts included (`draft: true`), with their `size` (files, lines added and removed). `waiting_days` counts from the user's last review; `rereview: true` means the author has answered it.
+- A GitHub review request is theirs only while its URL is present in `github.review_requests`. On a successful GitHub capture, if a carried-over review request is absent from that list, remove that review-request item from `queue` or `waiting` (don't keep it just because the PR is still open). This list contains only requests addressed to the individual user, not a team. Keep any separate email or message ask about the same PR if that independently remains theirs.
+- `github.mentions` — where someone @mentioned the user on GitHub (issues, PR threads), since `SINCE`: `repo`, `title`, `url`, `unread`, the issue or PR itself — `state`, `assignees`, whole `body`, latest `comments` — and `last_by`, with `answered: true` when the latest word is the user's. They otherwise reach the user only as GitHub notification mail, which isn't read.
+- `ado` — Azure DevOps, read the same way across the whole organisation and in the same shapes: `ado.work` (work items assigned to the user that are under way — in a sprint running now, or in progress and touched within the lookback — each with its `type`, `status`, `body`, `comments` and the PRs linked to it; then their PRs linked to none), `ado.review_requests` (PRs where they're a reviewer and haven't approved; `rereview: true` when the author pushed after the user's last word on a PR they voted down), `ado.mentions` (work item discussions that @mentioned them since `SINCE`; a mention in a PR comment comes as notification mail), and `ado.release` (the latest release of the pipeline `config.ado` names, if any). A PR's `review` is `APPROVED`, `CHANGES_REQUESTED`, `WAITING_FOR_AUTHOR` or `PENDING`; `merge: "conflicts"` means it can't merge as it is. Everything below applies to them as to their GitHub counterparts; their `id` is the web URL. `ado.skipped: true` means Azure DevOps isn't configured: leave it out of `sources` altogether.
+- `issue_states` — issues carried over from `PREV` that aren't in `work` or `mentions`, by URL: `state`, `assignees`, `body`, `comments`. How 5a re-judges whose an issue is when nothing new came in about it.
+- `ado_states` — Azure DevOps work items and PRs carried over from `PREV` that aren't in this run's lists, by URL: `state`, and for a PR its `votes` and `closedAt`.
+- `pr_states` — the current state of every other GitHub PR the inputs link to (carried-over items, links in mail and chats), by URL: `state` (`OPEN` / `MERGED` / `CLOSED`), `isDraft`, `reviewDecision`, `latestReviews`, `updatedAt`. It's how 5a checks a loop about a PR; for a PR that isn't there, go by what the inputs say.
+- `ok: false` on `github` or `ado` means that source failed — record it in `sources`, don't abort.
+
+`run.mjs` adds `work` and `review_requests` to the panel itself — leave them out of `brief.json`.
+
+## Step 3: Outlook — `mail`
+
+When `mail.provider` is `microsoft-sdk`, mail is read directly through Graph with GET requests, which do not mark it read. It uses the separate Graph sign-in; a Teams browser failure does not make Graph mail fail. `mail.signin_needed` then means the SDK could not renew silently: use the dedicated desktop sign-in instruction from CURRENT_SOURCE_STATUS. Otherwise mail comes from the Outlook browser lists, without opening messages; `mail.signin_needed` means its browser session needs attention. In either case, source status comes only from CURRENT_SOURCE_STATUS. Never infer a Teams failure from Outlook or a mail failure from Teams. A failed source is unknown: preserve unresolved asks, and never type credentials. `mail.error` is the collector's sanitized failure reason.
+
+### 3a. Mail folders — `mail.folders`
+
+One list of rows per folder (the received folders and Sent, from `config.json` → `mail`), newest first, read back past `SINCE`. Each row: `convid`, `label`, `unread`, `time`. A meeting request also has `meeting`: the meeting's own time as its row shows it ("Thu 8/10/2026 5:30 PM - 8:00 PM", D/M/Y) — its `time` is only when the invite arrived. `label` = flags (`Flagged`, `Has attachments`, `Marked as high priority by Copilot`) + sender/recipients + subject + preview. `time` is local, D/M/Y.
+
+| Folder | What it's for |
+| --- | --- |
+| Received (`mail.received_folders`: Inbox and the subfolders the user's rules file mail into) | Mail sent to the user. Rules file it into the subfolders, so an ask can land in any of them. Keep items after `SINCE`, **read or unread** (the user may skim on a phone — read ≠ handled); on a first run also anything `Flagged`. |
+| `skipped_folders` (e.g. GitHub) | **Not read.** Notification mail; GitHub itself is in `github`. |
+| Sent | The user's promises and asks ("I will…", "could you…"). A Sent row's `label` starts with its **recipients**, not the sender — `<user.name>; Sam Lee; …` is a mail the user sent to themselves and Sam. Items after `SINCE` (first run: since `LOOKBACK`). Skip their own status reports (daily scrum emails and the like) — status, not commitments. |
+
+A received folder of teammates' stand-up or status emails (a `Daily Scrum` folder, say) is context — who's blocked, who's on leave — almost never an ask. Only an item addressed to the user by name is an action.
+
+**Deleting received mail means done.** The user deletes mail they're finished with or don't care about, so:
+- A received item carried over from `PREV` whose `convid` is **no longer in any received folder** is gone — drop it silently (no `done` row). Moving it to Archive counts the same.
+- **Mail from Sent doesn't close by deleting it.** Deleted Items lists mail by its own date, not when it was deleted, so an old mail deleted today sits far below anything a run reads — and Outlook can neither sort by deletion time nor open one mail by link. A loop from Sent closes when its conversation answers or delivers it, or when the user ticks it on the panel (their clicks, step 5).
+- **Absence needs a full read.** A list that's still loading can come back short. When a carried-over received item is missing, the collector reads the received folders a second time, 5 s later, and keeps rows from either read. So an item is gone only if it's missing from `mail.folders` **and** that folder's rows reach back past the item's own time.
+
+Links and identity for mail items:
+- `id`: the `convid` — always set it; it's what `+NEW` matches on across runs.
+- `url`: **only the Inbox can be deep-linked** — `https://outlook.office.com/mail/inbox/id/<encodeURIComponent(convid)>` opens that conversation. The same `/id/` route on Sent Items or a subfolder silently drops back to the folder list, and Outlook ignores search terms in the URL.
+  - Received mail in a subfolder → the folder's URL from `config.json`.
+  - A loop from Sent whose conversation **also has mail in the Inbox** (someone replied) → the Inbox link; it opens the whole thread. Otherwise → the Sent folder URL.
+
+**Graph mail (`mail.provider: "microsoft-sdk"`):** the same folder/row shape is supplied, reading the full lookback plus older flags on a first run. Rows additionally carry `at` (ISO), `subject`, `from`, `to`, `cc`, `preview`, and Microsoft's own `url` deep link. Prefer that URL as supplied for any folder; do not rebuild one from `convid`. Several messages can share one conversation ID: combine their evidence into one matter, preserving the existing panel ID when it is the same ask. Arrival time is not a deadline. Read and unread messages are both eligible. A GET does not mark mail read. If `deletion_evidence` is false, **absence never proves deletion or completion**: the read has a bounded lookback and the source is migrating from browser IDs. Keep previous unresolved asks unless a reply, delivery, explicit cancellation or Ian's click closes them. Deduplicate by deliverable, people and subject when an old browser ID differs. A failed or truncated mail read must not close anything. Graph errors refer to the dedicated desktop sign-in shortcut only when CURRENT_SOURCE_STATUS explicitly says sign-in is required.
+
+### 3b. Today's calendar — `mail.calendar`
+
+Each label is `Title, 9:30 AM to 9:45 AM, Friday, September 25, 2026, [location], By <organizer>, Busy, [Recurring event]`. Convert to 24h `HH:MM`. Drop `Canceled` / `Declined` events, other people's leave / out-of-office notices (shown as `Free`, organised by someone else), and personal blocks (titles containing an entry of `config.calendar.skip_events`). The whole day goes in `calendar` every run; it's what 5c ranks the queue around.
+
+### 3c. Graph calendar — `graph`
+
+When Ian has signed Meta-Nav in to Microsoft Graph, `graph.ok` is true and `graph.calendar[]` is his real calendar read directly from Microsoft, from two days back to seven days ahead: `{id, subject, start, end, all_day, cancelled, location, organizer, show_as, response, online_url, url, preview}`. `start` and `end` are his wall-clock time in `graph.timezone` (`2026-10-21T10:00:00`; an all-day entry is just its date). This is more reliable than `mail.calendar` (today only, read off the page), so prefer it, but it adds no new kind of ask.
+- **`social`:** a birthday morning tea, farewell drinks or team lunch on the calendar is a `social` item (`id` `cal:<id>`, `url` the entry's `url`, `where` its `location`, `detail` from `preview` if it says anything). Skip `cancelled` entries; an entry already in `social` as an invite or Teams post is the same occasion — keep one.
+- **Meetings:** prep and follow-up rules are unchanged — only an agenda, an ask or a promise creates work. A meeting later in the week with a clear agenda in `preview` can justify a prep row; its date is the `due`.
+- **Today's `calendar` section:** keep building it from `mail.calendar`. Only when that list is empty or failed and `graph.ok` is true, fill it from today's `graph.calendar` entries (`start`/`end` as `HH:MM`, `all_day`, not cancelled).
+- **If `graph.ok` is false**, never infer that meetings or asks disappeared. With the SDK provider enabled, Calendar is a monitored source: copy its current status from CURRENT_SOURCE_STATUS. Otherwise an unconfigured legacy Graph reader remains optional. Outlook mail and Calendar can succeed or fail independently; Teams keeps its own browser status.
+
+## Step 4: Teams — `teams`
+
+The collector reads Teams' own cache (IndexedDB), with `teams-extract.js`, once it has caught up — no network call of its own, no chat opened, nothing marked read. `teams.signin_needed` is handled like Outlook's (step 3); `teams.error` → `ok: false` with a short note.
+
+`teams.conversations[]` has `kind` (`dm` / `group` / `meeting`; a `channel` appears only when a post there looks like workplace social — a birthday, a welcome, drinks — and holds only those posts: never an ask, see "Workplace social"), `name`, `unread`, and `messages[]` of `{id, at, from, unread, text}` where `from: "ME"` is the user. Bot chats (`config.teams.skip_chats`) are already left out: they're tests or reminders, not people.
+Only conversations with something new since `SINCE` are included (since `LOOKBACK` on a first run) — the others have nothing to re-judge; their loops come from `PREV`. A conversation the user took part in carries the whole lookback of history, for context. No conversations and no error means a quiet stretch.
+Each message carries its `link`, which opens it in the **Teams desktop app** — use it as the item's `url` (the message that opened the loop) as-is; never build one.
+Give every Teams item `"id": "<conversation id>/<message id>"`, where the message is **the one that opened the loop** — the ask, or the user's promise — never a later reply or nudge. It's the item's identity for `+NEW`, the update flag and the panel's "done" (stored by id), so it must come out the same on every run, including a first run that rebuilds everything, and must not change when link formats do.
+Never the `https://teams.microsoft.com/l/...` form: in a browser it stops on a "download the app / use the web app" launcher page instead of opening the message.
+
+## Step 5: Judge
+
+Everything lands in exactly one of four lists, once; an item already there from `PREV` is updated, not twinned.
+
+| List | What goes in | Order |
+| --- | --- | --- |
+| `queue` | What's **the user's to do** (principle 1) | **Ranked by you** (5c). Everything that's genuinely theirs — no fixed number; leave out what has gone stale or been overtaken. A long list is itself worth seeing. |
+| `waiting` | What others owe the user (principle 2) | Worth chasing now (`nudge_now`) first, then the oldest ask |
+| `highlights` | Worth knowing today, no action — no fixed number | Most important first, then newest |
+| `done` | Closed since it was on the panel, today (local time) | Newest first |
+
+Six principles decide everything in this step; what follows is how they apply.
+
+1. **Ownership — what's the user's to do.** Something is theirs when it's theirs to deliver: asked of them (a question in a DM, an @mention that asks them something, an email that asks them — To, Cc or a group mail naming them), promised by them ("I will…", "I'll…", "let me check"), assigned to them (a PR review request, an issue, their PBI under way), their own PR's next step, or their part of a group ask they're among. Being mentioned, copied, greeted or tagged doesn't make it theirs: a new issue that says "Hi <short_name>" but isn't assigned to them is the team's backlog — worth knowing, not theirs to do — unless it asks them something only they can answer; then answering is the task.
+2. **Waiting — what others owe the user.** They asked; others haven't delivered. An ask that went to several people splits by owner: the user's own part, when they're among them, in `queue`; the others' in `waiting`. Each part closes on its own: the user delivering their part closes their part only — the others' stays until each of them delivers, or the user says in so many words it's no longer needed.
+3. **Closure.** A matter closes when its owner delivers or the asker lets it go, shown in any system: a reply that answers or delivers, a PR merged or reviewed, the issue they said they'd create, received mail the user deleted or archived (dropped silently — not a `done` row), the user's own tick on the panel. When unsure whether something new is a loop at all, leave it out rather than nag; an item already on the panel stays until the data shows it closed.
+4. **One matter, one item — whatever systems it spans.** An email ask chased in Teams, a PR discussed in a chat, a ticket followed up by message: link them by the people, the subject and any number they share (ticket, PR, issue), keep the `id` of where it started, and fold every system's messages into its `thread`. A follow-up in any system is activity on it.
+5. **Cost of delay ÷ time orders the queue** (5c).
+6. **Write only what the data says.** Don't fill in a date, time, name or outcome it doesn't give: when a message was received isn't when its event is, and a meeting that's today is on today's calendar. Items carried over from `PREV` are re-judged under these principles, not copied — correct what they got wrong.
+
+**The user's own clicks.** Read `STATE` first (missing is fine). `tower:dismissed` maps an item's `id` to `{at, when, title}` or just `at`: they marked it done on the panel, or stopped waiting on it. Treat that item as closed on every run, first runs included — unless something happened on it after `at` (a reply, a new nudge): then it's open again, keep it with its new `last_activity`. When the data confirms an item they ticked really is closed, write its `done` row with **that item's `id`** and what actually happened ("Reviewed #1822 (approved), #1823 (changes requested)") — the panel shows it under their click and keeps their own title and UNDO. Otherwise write none: the panel shows their click itself. `tower:read` maps highlights they have read to their `at`: don't carry those over.
+
+### 5a. Carry over, re-check
+
+Each `queue` and `waiting` item from `PREV`, under the principles:
+- **Closed** (principle 3) → a one-liner in `done` (`"Sam reviewed and merged Api #80"`, `when`, `url`, `at`). **One thing, one `done` row**: stages of the same work (approved → merged) collapse into the latest.
+- **Still open, but something happened on it** (the user nudged again, a reply that doesn't close it) → keep the same `id`, set `last_activity` to that newest message's time, update `quote`, and keep everyone involved on it: those who still owe it in `who`, those who no longer do in `not_waiting`. `render.py` flags it updated.
+- **Still open** → keep its `id` / `url`, re-judged: whose it is, which list, its rank and wording.
+
+Keep `done` rows from `PREV` that closed today (local time, by `at`) — the panel shows today's only — and `highlights` under 24 hours old, re-judged the same way; a `done` row for an item the user ticked carries that item's `id`.
+
+### 5b. What each list needs
+
+**`queue`** — what principle 1 finds, including:
+- Others' PRs in `review_requests` (GitHub's and Azure DevOps'), from the day they're requested. Whether one goes in is your call: who is blocked on it, how long it has waited (`waiting_days`), whether the author has answered the user's last review (`rereview`), whether a draft is actually waiting on them or just parked.
+- Their PR's next step: `CHANGES_REQUESTED` (or `WAITING_FOR_AUTHOR`), failing CI, merge conflicts, `new_feedback`; approved and mergeable → "Merge #N".
+- Their PBIs under way (`github.work` and `ado.work`, `kind: "pbi"`, status In progress / In review / Blocked / Committed / Active — not Ready, New or backlog): one item each, `id` = the issue or work item URL, its PRs in the `reason` and `actions`.
+- `github.mentions` and `ado.mentions` that ask them something and aren't `answered`.
+- The configured release (`ado.release`): a stage `rejected`, `canceled`, or waiting on approval.
+- A meeting in the next few hours that needs preparation.
+
+A promise with a date ("Back in the office to make up WFH · Tue") gets `due`. "Answered" means a later `ME` message in that conversation that responds.
+
+**`waiting`** — what principle 2 finds: "could you…", "test please", "can you have a look", a PR link sent for review, with no reply or a reply that doesn't close it ("I need to discuss with X"). No minimum age; a reaction (👍) isn't closure.
+- `who` is everyone who still owes it — the nudge goes to them; `not_waiting` is everyone else in the loop who no longer does, because they delivered or passed it on to someone in `who` (first names; the panel shows them dimmed after `who`). When nobody is left in `who`, it's closed.
+- `reply_url` — where the conversation is live now, the last place either side wrote about it (asked by email, chased in Teams → the Teams chat); a nudge goes there. `nudge`: one short message the user could send as-is, in the conversation's language ("Hi Sam, any update on where the TV scripts should live?").
+- When it's time to chase — it blocks the user's own work, or it has gone quiet long enough — `nudge_now: true` and a short `why` ("Quiet 9 days", "Blocking your PR"). Nudges never go in `queue`: the panel puts `nudge_now` items at the top of Waiting On, with the drafted message one click away.
+- A group ask that includes the user (their own name among the recipients at the start of a Sent row's label) splits (principle 2) into two items from one conversation: the `queue` item takes the usual id, the `waiting` item the same id plus `#others`.
+- `thread`: the loop as chat bubbles — the last 2–3 messages, oldest first, from the user's ask to the latest word on it; for a loop across several people or chats, the ask and the reply from each, up to 6, so every reply sits after what it answers. Each is `{ "from": "ME" | "<first name, spelled as in who / not_waiting>", "text": "…", "at": "<ISO>", "via": "mail" | "teams" | "github" }`, `text` trimmed to the substance in its original language. The panel orders them by `at`, names each speaker except in a plain one-to-one chat, and says where each was said when the thread spans systems. Take them from the Teams messages or mail previews you have; one is fine if that's all.
+
+**`highlights`** — anything from any source the user would be glad to have seen today: a decision, feedback or announcement about their projects or work (`config.projects`); company and team news; what's happening with the people around them — leave, a new starter, a role change (stand-up emails often say); a share with substance in a group chat they're in; a social plan they'd want to know about; a new issue or discussion about their work that isn't theirs to do (principle 1). The test is "would they want to know this today?", not a category. Leave out bots and automated notices, chatter with nothing in it, and anything already elsewhere on the panel. A release of the configured pipeline that succeeded since `SINCE` is a highlight; an unchanged release isn't mentioned. As many as pass the test; none is fine.
+
+### 5c. Rank the queue — cost of delay ÷ time
+
+**Expedite first — someone is blocked on the user right now:** a PR that can't merge until they review, a teammate who can't continue. On top whatever it takes. Prod or a customer affected → `urgency: "high"`.
+
+**Everything else by cost ÷ time** — Smith's rule, the WSJF of product work: on one person's list it's the order that keeps the total cost of waiting lowest.
+- **Cost** — what another day costs: how many people it holds up or affects, whose (prod or a customer, then the team, then only the user), and what rides on it. It grows with waiting only where waiting itself does harm — the patience of someone who asked (more when they chase again, in any system), the credibility of a promise the user made; something nobody is waiting on gains nothing from age. No sprint or no date means no deadline, not a low cost: a bug hurting prod users costs a lot every day.
+- **Time** — how long it takes, set as `effort` on every queue item, one of four (the panel shows the letter, like the game's Difficulty column): **D** minutes — a reply, an approval, a Done; **C** under an hour — a normal PR review, a short write-up; **B** a few hours — a bug hunt, a small feature; **A** a day or more — a big PBI under way. Judge it from what the work is: a PR's `size` for a review, the body for an issue.
+- **Deadlines by slack:** a due date, a dated promise, the sprint's end for a PBI on a board running sprints (`sprint_end`). Slack = the time left before it minus the time it takes, counting today's meetings. With plenty of slack it ranks by its cost like the rest; as the slack runs out it rises, and with none it goes on top.
+- **Today's project** (`TODAY_PROJECT`, step 1 — only when `config.schedule` sets one): the user works on one project a day, so waiting until another project's day is the normal pace for its work — a day's delay there costs little. Tell which project an item belongs to from its repo, mail folder, chat and people. `none` means this rule doesn't apply.
+- **Quick ones together:** several items of a few minutes each sit next to each other, where the first of them ranks, so they're done in one go rather than between bigger work: every switch costs more than its minutes.
+
+Rank by cost, not by how urgent something feels: a loud, recent ask with little at stake stays below a quiet one that blocks someone. `urgency: "high"` only when delay costs something **today**; a new high item triggers a desktop notification, so be sparing.
+
+**Today's `calendar` shapes the order.** The user has Outlook for the meetings themselves; Meta-Nav's job is what they change about the work:
+- Work a meeting needs moves up, and its `reason` says so — "Needed for the 14:00 Script Review"; an ask from someone they're about to meet goes before that meeting — "Answer Chris before your 16:30 1:1".
+- Fit the time they have: a short gap before the next meeting favours a quick item first; a long free stretch is when the bigger one fits.
+
+Every queue item states its rank reason twice:
+- `why` — a short tag for the list, ≤ 20 chars: "Alex is blocked", "Due today", "Promised Rob". No age — the panel shows how long it has been open.
+- `reason` — one sentence for the focus card, ≤ 90 chars: "He finished the fixes on 24/9; all three PRs need your review to merge."
+
+**Write the ranking down**, so a wrong order can be traced to the rule behind it. The panel doesn't show these; they stay in `runs/`.
+- `cost` on every queue item — one sentence: who another day's delay affects and how much, whether it grows with waiting, and for a deadline the slack left. "Prod users get bare links every day; not today's project." Judge it for each item before ordering: the order follows from `cost` and `effort`.
+- `tradeoffs` on the brief — wherever the rules above pulled different ways, which won and why, a sentence each: "#81 above Sam's feedback: the prod cost outweighs the project day." Empty when nothing conflicted.
+
+And `actions`: 1–2 buttons that start the work, first is the main one — `{ "label": "Open PR", "url": "…" }`, `{ "label": "Reply to Alex in Teams", "url": "msteams:…" }`.
+
+### Copy rules — the panel is scanned, not read
+
+| Field | Limit | Shape |
+| --- | --- | --- |
+| `title` / `what` | ≤ 40 chars (one line in the list) | **Starts with the action or the thing**: "Re-review #1796 #1800 #1801", "Ask Priya: ticket 17817 link is broken". |
+| `why` | ≤ 20 chars | The rank reason, see 5c. |
+| `reason` | ≤ 90 chars | Why now, and the one fact that shapes the action. |
+| `detail` (highlights) | ≤ 90 chars | The substance. |
+| `who` | **array of first names** | `["Alex"]`, `["Jordan", "Sam"]`. **The same person is always spelled the same way** across every item and source — "Alex", never "Alex Smith [Acme]" or a GitHub handle — because Waiting On groups on it. |
+| `quote` | ≤ 40 chars | The original words, trimmed to the promise or ask. |
+| `thread[].text` | ≤ 80 chars each | One message, trimmed to what it says, in the language it was written in; who said it is in `from`. |
+| `nudge` | ≤ 120 chars | Ready to paste, polite, in the conversation's language. |
+| `headline` | not shown | Terminal summary only. |
+| `cost` / `tradeoffs` | not shown | The ranking, see 5c. |
+
+No emoji; no repeating the source ("On Teams, …") — the link already goes there. **What the run writes in its own words is English** — `title`, `what`, `why`, `reason`, `detail`, `where`, `due`, action `label`s, `done` rows, `sources` notes, `headline`, `cost`, `tradeoffs` — even when the source message was in another language. **People's words stay in their language:** `quote` and `thread` are what they wrote, untranslated, and a `nudge` is sent to them, so it's in the conversation's language. Names stay as people spell them. Dates in `due`: weekday + day/month, "Tue 29/9". A time that isn't today carries its day — "yesterday 12:10", "Mon 12:10"; a bare time always means today.
+**`url` goes to where the ask or update was made** — the comment (`comments[].url`), the Teams message, the review (`latest_feedback_url`) — not just the issue, PR or chat it sits in; an action can still open the whole issue or PR. Mail outside the Inbox can only open its folder (3a).
+
+## Workplace social — `brief.social`
+
+Ian wants to see the human side of work next to the work: birthdays, work anniversaries, welcomes for new starters, farewells, social events (drinks, lunches, parties, karaoke), and personal news (a baby, a wedding, a congratulations for a colleague). It is a separate list, `social`, in `brief.json`. It is never part of `queue`, `waiting`, `highlights` or `headline`, and it never changes their ranking or counts.
+
+**Where to look — only what was collected, no new sources:**
+- **Mail** (`mail.folders`, received folders): a colleague's invite or announcement ("<Name> Birthday Dinner, Drinks and Karaoke!" arrives as a `Meeting` row from the person themselves); the monthly **SSW Times** newsletter, whose "Staff Update" names the new starters, anniversaries and farewells of the month — use only the names and facts that its row text actually shows, never guess the rest of it; all-staff notices from admin or HR about a welcome or a farewell.
+- **Teams** (`teams.conversations`): colleagues' chats and group chats, and the `channel` posts the collector let through because they look social. Take the message's `link` as the `url`, as-is.
+- **Calendar** (`mail.calendar`): today's entries such as a birthday morning tea.
+- **Sent** mail is Ian's own words: a "congratulations" he sent shows the occasion happened, but it is not a new item by itself.
+
+**What is not social:** work events (conferences, webinars, user groups, paid events, customer or vendor meetings); automated mail (SSWFreeLunch LunchOps and timesheet reminders, Skillshop, newsletters from outside SSW, product "Welcome!" emails); Ian's own onboarding mail; handover and responsibility mail; a work win ("congrats on shipping the release") unless it is about a person's milestone. **Sensitive personal news — illness, bereavement, anything a person has not announced themselves — is never listed.** Skip an item when the source does not say who it is about.
+
+**Kinds:** `birthday`; `anniversary` (a work anniversary); `welcome` (a new starter); `farewell` (someone leaving, a last day); `event` (a social get-together: drinks, lunch, party, karaoke, morning tea); `news` (a baby, a wedding, a congratulations for a person). Pick the one that fits best; a birthday party invite is an `event` if the invite is for the get-together, a `birthday` if it is the birthday post itself — never both for the same occasion.
+
+**Fields:** `{ "id", "kind", "title", "who", "when", "where", "detail", "url" }` — no `new` (the runner sets it).
+- `id` — stable across runs and rebuilds: the mail `convid`, or `<conversation id>/<message id>` for Teams, of the post or invite that announced it. When one mail announces several things (the SSW Times), use `<convid>#<kind>-<first name>`.
+- `title` — short, in English, about the person: "Penny's birthday", "Welcome Deborrah", "Sam's farewell drinks", "Team lunch".
+- `who` — the names of the people it is about, as written in the source; `[]` for an event with no named person.
+- `when` — the occasion's date as `YYYY-MM-DD`, or a full ISO datetime when a time is given (an invite's own time from the row's `meeting`, which is D/M/Y, converted). When the source names no date, use the **date it was posted or arrived** (`at`, `time`) — an announcement is about the day it was made. `null` only when no date exists at all.
+- `where` — the chat or channel it was posted in, or the event's location; `null` if unknown.
+- `detail` — one line saying what happens or what was said ("Dinner, BYO drinks and karaoke — RSVP to Penny"). Nothing the source does not say.
+- `url` — the post's `https://` or `msteams:` link, or an Outlook Inbox link for mail (rules in step 3a); `null` if none.
+
+**Window:** keep an item only if its `when` is from **two days ago to seven days ahead** (today is `RUN_FACTS.now` in `RUN_FACTS.timezone`); the runner drops anything outside it. Collection only brings new mail and messages, so **carry over** every item from `PREV.social` that is still inside the window, with the same `id`, and drop one that was cancelled or moved out of the window.
+
+**One occasion, one item:** the same person and kind on the same day from an invite, a Teams post and a calendar entry is one item — keep the one with the best link. Don't repeat an item that is also in `queue`; when an RSVP or a contribution is asked for by a date, that is a normal `queue` row (effort D) **and** the social item stays.
+
+If there is nothing in the window, `social` is `[]` — an honest empty list.
+
+## Step 6: Compose `brief.json`
+
+Write it to `BRIEF`, the whole file at once, as valid JSON.
+
+```json
+{
+  "date": "2026-09-26",
+  "generated_at": "<now, UTC ISO8601 — run.mjs replaces it with the collection time>",
+  "interval_min": 60,
+  "since": "<SINCE>",
+  "headline": "One sentence: the single most important thing right now.",
+  "tradeoffs": ["Where the ranking rules conflicted, which won and why."],
+  "queue": [
+    { "id": "...", "source": "github|teams|mail|ado", "title": "Re-review #1796 #1800 #1801",
+      "why": "Alex is blocked", "reason": "He finished the fixes on 24/9; all three PRs need your review to merge.",
+      "who": ["Alex"], "urgency": "high|normal", "effort": "D|C|B|A", "due": "optional, e.g. Tue 29/9",
+      "cost": "Alex can't merge three PRs until you review; grows each day he waits.",
+      "url": "...", "actions": [ { "label": "Open PR", "url": "..." }, { "label": "Reply to Alex in Teams", "url": "msteams:..." } ],
+      "since": "<ISO: when it became theirs to do — the ask, the promise, a GitHub item's `since`>", "last_activity": "<ISO>" }
+  ],
+  "waiting": [
+    { "id": "...", "source": "teams|mail", "who": ["Sam"], "what": "Decide where the TV scripts live",
+      "quote": "I will need to discuss with Taylor", "nudge": "Hi Sam, any update on where the TV scripts should live?", "reply_url": "msteams:… (where the nudge goes — never the thing being chased)",
+      "thread": [ { "from": "ME", "text": "Where should the TV scripts live — repo or SharePoint?", "at": "<ISO>" }, { "from": "Sam", "text": "I will need to discuss with Taylor", "at": "<ISO>" } ],
+      "not_waiting": ["optional: others in the loop who no longer owe it"],
+      "nudge_now": true, "why": "Quiet 9 days", "since": "<ISO of the ask>", "last_activity": "<ISO>", "url": "..." }
+  ],
+  "calendar": [ { "start": "09:30", "end": "09:45", "title": "...", "all_day": false } ],
+  "social": [ { "id": "<convid>", "kind": "birthday|anniversary|welcome|farewell|event|news", "title": "Penny's birthday", "who": ["Penny"], "when": "2026-10-21",
+      "where": "Brisbane office", "detail": "Morning tea at 10:30", "url": "https://outlook.office.com/mail/inbox/id/…" } ],
+  "highlights": [ { "id": "...", "source": "teams|mail|ado", "where": "Project chat", "title": "...", "detail": "...", "url": "...", "at": "<ISO>" } ],
+  "done": [ { "what": "PR #1803 merged", "when": "10:12", "url": "...", "at": "<ISO>", "id": "optional: the id of the item it closes, when the user ticked it", "effort": "D|C|B|A: when it closes a queue item, that item's effort" } ],
+  "sources": [ { "name": "Outlook", "ok": true, "note": "3 new emails" } ]
+}
+```
+
+Don't set `new` or `updated` (on `social` items too) — `run.mjs` computes both against the previous run from `id` and `last_activity`. Mail items: `"id": "<convid>"`; Teams items: `"id": "<conversation id>/<message id>"`; GitHub items: the PR/issue URL.
+`sources`: one entry each for **Outlook, Teams, GitHub**, and **Azure DevOps** when `config.ado` is set; `ok: false` with a short `note` whenever one failed or was skipped. The page shows a red banner for any failed source — a quiet panel must mean "nothing happened", never "didn't look".
+
+## Step 7: Finish
+
+`run.mjs` renders the page from `BRIEF` and adds `work` and `review_requests` from the inputs itself. Never open the panel: the user keeps it open in a browser tab, and it reloads itself when a run writes something new.
+
+The structured summary describes priorities and section counts only; the runner appends source health from collection facts. Never infer failures from PREV.
+
+End with a short reply — it goes into the run's log, where the user looks when something seems off: the headline, counts per section, anything new, any failed source, and the `tradeoffs`.
+
+### Marketing review clarifications
+
+When marketing mode is enabled:
+- A deadline derived solely from a sprint end is `due: "Sprint ends Fri 23/10"` (using the actual
+  supplied date), not an independently agreed publication/approval deadline. Include the current
+  item state (In progress, Committed, etc.) in `reason` where that changes the next action.
+- `who` on a queue item is the requester/approver, never a reassignment away from Ian. Phrase the
+  reason as "Penny asked you to…" or "You need Uly and Adam's approval…", and never imply an
+  approval has been requested or received without evidence. Unknown approval state stays unknown.
+- The current SSWTV tagline work is one matter: "Propose SSWTV tagline options", "Broaden SSW TV
+  tagline", "Create tagline replacement options proposal" and "SSW TV Tagline Rewrite Proposal".
+  Create exactly one queue row, put the related ADO items and original Teams ask in its actions,
+  and remove the duplicate old row. Its subtasks are context, not extra queue rows.
+- The two ASF work items need distinct deliverables to justify two rows: label planning and
+  drafting/production explicitly when the sources distinguish them. Otherwise combine them.
+- For a content PR Ian authored, requested changes mean revising his content, not reviewing
+  someone else's code. A pending PR alone is waiting for approval; don't invent a task for Ian.
+- Waiting rows use `what` as their title in this panel. Make `what` name the missing decision,
+  asset or access; `why` says what it blocks, or null if unknown. Do not add a redundant `title`.
+- Show product coverage checks only for evidenced release/launch signals. With no TinaCMS or
+  EagleEye release evidence in this run, invent neither a release nor a missing blog post.
+- The renderer already displays a prominent source-failure banner. Do not create an invented
+  automation-failure queue item just to fill a health category, or manufacture meeting follow-up.
