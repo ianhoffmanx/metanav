@@ -1,9 +1,9 @@
 import test from 'node:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { parseEnv, eventOf, calendarWindow, deviceLogin, accessToken, calendar, graphInputs, fileStore } from '../graph.mjs';
+import { graphApp, parseEnv, eventOf, calendarWindow, deviceLogin, accessToken, calendar, graphInputs, fileStore } from '../graph.mjs';
 
 const app = { tenant: 't-1', id: 'c-1', secret: 'shh-secret' };
 const memory = (initial = null) => { let v = initial; return { load: () => v, save: x => { v = x; }, get: () => v }; };
@@ -39,29 +39,36 @@ test('device login shows the code, waits through pending, and keeps only the ref
     reply(400, { error: 'slow_down' }),
     reply(200, { access_token: 'AT', refresh_token: 'RT1', scope: 'Calendars.Read', id_token: idToken({ preferred_username: 'ian@ssw.com.au' }) }),
   ];
-  const done = await deviceLogin(app, store, { onCode: c => shown.push(c), sleep: async () => {}, fetchImpl: async (u, o) => { calls.push([u, String(o.body)]); return responses.shift(); } });
+  const done = await deviceLogin({ ...app, secret: undefined }, store, { onCode: c => shown.push(c), sleep: async () => {}, fetchImpl: async (u, o) => { calls.push([u, String(o.body)]); return responses.shift(); } });
   assert.equal(shown[0].user_code, 'ABC123');
   assert.deepEqual(done, { account: 'ian@ssw.com.au', scope: 'Calendars.Read' });
   assert.equal(store.get().refresh_token, 'RT1');
   assert.ok(!('access_token' in store.get()), 'only the refresh token is kept');
-  assert.ok(calls.every(([, body]) => !body.includes('shh-secret')), 'a public-client sign-in sends no secret');
+  assert.ok(calls.every(([, body]) => !body.includes('shh-secret') && !body.includes('client_secret')), 'a public app is sent no secret');
 });
 
 test('a refusal ends the sign-in with Microsoft\'s reason, and an expired code says so', async () => {
   const refused = [reply(200, { device_code: 'dc', user_code: 'A', verification_uri: 'u', expires_in: 900, interval: 1 }),
     reply(400, { error: 'access_denied', error_description: 'AADSTS65004: The user declined.\r\nTrace ID: x' })];
-  await assert.rejects(deviceLogin(app, memory(), { sleep: async () => {}, fetchImpl: async () => refused.shift() }), /declined/);
+  await assert.rejects(deviceLogin({...app,secret:undefined}, memory(), { sleep: async () => {}, fetchImpl: async () => refused.shift() }), /declined/);
   const none = [reply(400, { error: 'invalid_request', error_description: 'AADSTS70002: nope' })];
-  await assert.rejects(deviceLogin(app, memory(), { fetchImpl: async () => none.shift() }), /would not start/);
+  await assert.rejects(deviceLogin({...app,secret:undefined}, memory(), { fetchImpl: async () => none.shift() }), /would not start/);
 });
 
-test('a confidential-client app is retried with its secret, and a rotated refresh token is saved', async () => {
+test('an app with a secret presents it from the first request; a public app is retried without it; a rotated refresh token is saved', async () => {
   const store = memory({ refresh_token: 'RT1' }), bodies = [];
-  const responses = [reply(400, { error: 'invalid_client', error_description: 'AADSTS7000218: client_secret required' }), reply(200, { access_token: 'AT2', refresh_token: 'RT2' })];
+  const responses = [reply(400, { error: 'invalid_client', error_description: 'AADSTS700025: Client is public so neither client_assertion nor client_secret should be presented.' }), reply(200, { access_token: 'AT2', refresh_token: 'RT2' })];
   const token = await accessToken(app, store, { fetchImpl: async (u, o) => { bodies.push(String(o.body)); return responses.shift(); } });
   assert.equal(token, 'AT2');
   assert.equal(store.get().refresh_token, 'RT2');
-  assert.ok(!bodies[0].includes('shh-secret') && bodies[1].includes('client_secret'));
+  assert.ok(bodies[0].includes('client_secret') && !bodies[1].includes('client_secret'));
+});
+
+test('a confidential app that still fails reports which attempts were made, and never the secret', async () => {
+  const sent = [];
+  await assert.rejects(accessToken(app, memory({ refresh_token: 'RT' }), { fetchImpl: async (u, o) => { sent.push(String(o.body)); return reply(400, { error: 'invalid_client', error_description: 'AADSTS7000215: Invalid client secret provided.' }); } }),
+    e => /with secret\]/.test(e.message) && !/shh-secret/.test(e.message));
+  assert.equal(sent.length, 1, 'a wrong-secret error is not retried without the secret');
 });
 
 test('no sign-in or an expired one is a plain instruction, never a crash', async () => {
@@ -85,10 +92,10 @@ test('the calendar read pages, asks for the user\'s zone, and reports a denial w
 });
 
 test('the collector input says "not signed in" quietly and turns any failure into data', async () => {
-  assert.deepEqual(await graphInputs({ app, store: memory() }), { ok: false, skipped: true, note: 'Graph is not signed in' });
-  const bad = await graphInputs({ app, store: memory({ refresh_token: 'RT' }), fetchImpl: async () => { throw new Error('network down'); } });
+  assert.deepEqual(await graphInputs({ provider: 'legacy', app, store: memory() }), { ok: false, skipped: true, note: 'Graph is not signed in' });
+  const bad = await graphInputs({ provider: 'legacy', app, store: memory({ refresh_token: 'RT' }), fetchImpl: async () => { throw new Error('network down'); } });
   assert.equal(bad.ok, false); assert.match(bad.error, /network down/);
-  const good = await graphInputs({ app, store: memory({ refresh_token: 'RT' }), now: new Date(2026, 9, 20),
+  const good = await graphInputs({ provider: 'legacy', app, store: memory({ refresh_token: 'RT' }), now: new Date(2026, 9, 20),
     fetchImpl: (r => async () => r.shift())([reply(200, { access_token: 'AT' }), reply(200, { value: [] })]) });
   assert.equal(good.ok, true); assert.deepEqual(good.calendar, []); assert.ok(good.timezone);
 });
@@ -101,5 +108,20 @@ test('the token file store keeps the token encrypted on disk and reads it back',
     store.save({ refresh_token: 'RT-secret-value', account: 'ian@ssw.com.au' });
     assert.ok(!readFileSync(file, 'utf8').includes('RT-secret-value'), 'the token is not readable in the file');
     assert.deepEqual(store.load(), { refresh_token: 'RT-secret-value', account: 'ian@ssw.com.au' });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the Mail Reader app is used; the SharePoint app never is; older .env names still work', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'metanav-env-')), file = join(dir, '.env');
+  try {
+    writeFileSync(file, 'SHAREPOINT_MSGRAPH_TENANT_ID=st\nSHAREPOINT_MSGRAPH_CLIENT_ID=sp\nSHAREPOINT_MSGRAPH_CLIENT_SECRET=sp-secret\n'
+      + 'READER_MSGRAPH_TENANT_ID=t\nREADER_MSGRAPH_APP_ID=reader\nREADER_MSGRAPH_CLIENT_SECRET=reader-secret\n');
+    assert.deepEqual(graphApp(file), { tenant: 't', id: 'reader', secret: 'reader-secret' });
+    writeFileSync(file, 'SHAREPOINT_MSGRAPH_TENANT_ID=st\nSHAREPOINT_MSGRAPH_CLIENT_ID=sp\nSHAREPOINT_MSGRAPH_CLIENT_SECRET=sp-secret\n');
+    assert.throws(() => graphApp(file), /not configured/);   // only the SharePoint app: nothing usable, and it is not picked up
+    writeFileSync(file, 'MSGRAPH_TENANT_ID=t\nMSGRAPH_CLIENT_ID=old\nMSGRAPH_CLIENT_SECRET=old-secret\nMSGRAPH_APP_ID=m365\n');
+    assert.deepEqual(graphApp(file), { tenant: 't', id: 'm365', secret: undefined });
+    writeFileSync(file, 'MSGRAPH_TENANT_ID=t\nMSGRAPH_CLIENT_ID=old\nMSGRAPH_CLIENT_SECRET=old-secret\n');
+    assert.deepEqual(graphApp(file), { tenant: 't', id: 'old', secret: 'old-secret' });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

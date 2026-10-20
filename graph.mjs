@@ -1,16 +1,18 @@
 #!/usr/bin/env node
-// Direct Microsoft Graph access for Meta-Nav, as the signed-in user (a delegated, read-only sign-in by device code).
-//   node graph.mjs login            show a short code to enter at microsoft.com/devicelogin, then keep the sign-in
-//   node graph.mjs status           is there a sign-in, whose, and does the calendar read work
-//   node graph.mjs calendar [days]  print the calendar window as the collector sees it (counts and titles)
-// The app's id, tenant and secret come from a .env (MSGRAPH_CLIENT_ID / _TENANT_ID / _CLIENT_SECRET); they are never printed
-// or copied. The refresh token is kept encrypted for this Windows user (DPAPI) next to the browser profile, never in the repo.
+// Direct Microsoft Graph access as Ian, with read-only delegated permissions.
+//   node graph.mjs login     explicit browser sign-in; never started by background collection
+//   node graph.mjs status    silently check the saved sign-in
+//   node graph.mjs calendar  read the collector calendar window, reporting counts only for the SDK
+// graph.provider=microsoft-sdk uses Microsoft's approved public client and encrypted SDK cache.
+// Only the tenant is read from the existing .env; the Reader app secret is never sent to the SDK.
+// The legacy provider below remains available for correctly configured public-client registrations.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROFILE, SKILL, WIN, config } from './common.mjs';
+import { runSDK } from './graph-sdk.mjs';
 
 export const SCOPES = 'Calendars.Read offline_access openid profile';
 const CACHE = dirname(PROFILE);
@@ -35,8 +37,14 @@ export function envFile() {
 
 export function graphApp(file = envFile()) {
   const env = file ? parseEnv(readFileSync(file, 'utf8')) : {};
-  const app = { tenant: env.MSGRAPH_TENANT_ID, id: env.MSGRAPH_CLIENT_ID, secret: env.MSGRAPH_CLIENT_SECRET };
-  if (!app.tenant || !app.id) throw new Error('Graph is not configured: MSGRAPH_TENANT_ID and MSGRAPH_CLIENT_ID are missing from the .env');
+  // The Mail Reader app (READER_MSGRAPH_*) is the one for Microsoft 365 data. The SharePoint app (SHAREPOINT_MSGRAPH_*) is never used.
+  // Older .env files named it MSGRAPH_APP_ID (with MSGRAPH_APP_SECRET), or used MSGRAPH_CLIENT_ID / _SECRET; those still work.
+  const app = env.READER_MSGRAPH_APP_ID
+    ? { tenant: env.READER_MSGRAPH_TENANT_ID, id: env.READER_MSGRAPH_APP_ID, secret: env.READER_MSGRAPH_CLIENT_SECRET }
+    : env.MSGRAPH_APP_ID && env.MSGRAPH_APP_ID !== env.MSGRAPH_CLIENT_ID
+      ? { tenant: env.MSGRAPH_TENANT_ID, id: env.MSGRAPH_APP_ID, secret: env.MSGRAPH_APP_SECRET }
+      : { tenant: env.MSGRAPH_TENANT_ID, id: env.MSGRAPH_CLIENT_ID, secret: env.MSGRAPH_CLIENT_SECRET };
+  if (!app.tenant || !app.id) throw new Error('Graph is not configured: READER_MSGRAPH_APP_ID and READER_MSGRAPH_TENANT_ID are missing from the .env');
   return app;
 }
 
@@ -65,25 +73,34 @@ async function post(url, body, fetchImpl) {
 const failure = j => `${j.error || 'error'}: ${String(j.error_description || '').split(/\r?\n/)[0].replace(/\s*Trace ID.*$/, '')}`;
 const accountOf = idToken => { try { const c = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString()); return c.preferred_username || c.upn || c.email || null; } catch { return null; } };
 
-// A token request for this app. A public-client app needs no secret; one registered as confidential does.
+// A token request for this app. A confidential app (one with a secret) must present it; a public one must not (AADSTS700025).
+// So: with the secret first when there is one, and without it only if Microsoft says the app is public - never a probe that
+// could use up a one-shot device code. The returned error names which attempts were made, never the secret.
 async function tokenRequest(app, params, fetchImpl) {
   const url = `https://login.microsoftonline.com/${app.tenant}/oauth2/v2.0/token`;
-  let r = await post(url, { client_id: app.id, ...params }, fetchImpl);
-  if (r.json.error && /AADSTS7000218|invalid_client/.test(`${r.json.error} ${r.json.error_description}`) && app.secret) {
-    r = await post(url, { client_id: app.id, client_secret: app.secret, ...params }, fetchImpl);
+  const attempts = app.secret ? [true, false] : [false];
+  let r, tried = [];
+  for (const withSecret of attempts) {
+    tried.push(withSecret ? 'with secret' : 'without secret');
+    r = await post(url, { client_id: app.id, ...(withSecret && { client_secret: app.secret }), ...params }, fetchImpl);
+    const text = `${r.json.error} ${r.json.error_description}`;
+    const retry = withSecret ? /AADSTS700025/.test(text) : false;   // a public app: try again without the secret
+    if (r.json.access_token || !retry) break;
   }
+  if (r.json.error) r.json.error_description = `${String(r.json.error_description || '').split(/\r?\n/)[0]} [${tried.join(', ')}]`;
   return r;
 }
 
 // Device-code sign-in: onCode gets the code to show the person, then this waits (up to the code's lifetime) for them to finish
-export async function deviceLogin(app, store, { onCode = () => {}, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+export async function deviceLogin(app, store, { onCode = () => {}, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), publicClient = false } = {}) {
+  if (app.secret && !publicClient) throw new Error('Device-code sign-in requires a public-client app. Use the configured Microsoft SDK sign-in; the Reader secret cannot enable this flow.');
   const dc = await post(`https://login.microsoftonline.com/${app.tenant}/oauth2/v2.0/devicecode`, { client_id: app.id, scope: SCOPES }, fetchImpl);
   if (!dc.json.device_code) throw new Error('Microsoft would not start a sign-in: ' + failure(dc.json));
   onCode({ user_code: dc.json.user_code, verification_uri: dc.json.verification_uri, expires_at: new Date(Date.now() + dc.json.expires_in * 1000).toISOString() });
   let wait = (dc.json.interval || 5) * 1000;
   for (const end = Date.now() + dc.json.expires_in * 1000; Date.now() < end;) {
     await sleep(wait);
-    const t = await tokenRequest(app, { grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: dc.json.device_code }, fetchImpl);
+    const t = await post(`https://login.microsoftonline.com/${app.tenant}/oauth2/v2.0/token`, { client_id: app.id, grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: dc.json.device_code }, fetchImpl);
     if (t.json.access_token) {
       const saved = { refresh_token: t.json.refresh_token, scope: t.json.scope, account: accountOf(t.json.id_token), signed_in_at: new Date().toISOString() };
       if (!saved.refresh_token) throw new Error('Microsoft returned no refresh token (offline_access was not granted)');
@@ -140,14 +157,20 @@ export async function calendar(app, store, { from, to, fetchImpl = fetch, timezo
 }
 
 // What the collector puts in the inputs: never throws, and says plainly when Graph is not signed in or not reachable
-export async function graphInputs({ now = new Date(), app, store = fileStore(), fetchImpl = fetch } = {}) {
+export async function graphInputs({ now = new Date(), app, store = fileStore(), fetchImpl = fetch, provider = config.graph?.provider, sdk = runSDK } = {}) {
   try {
+    if (provider === 'microsoft-sdk') {
+      const w=calendarWindow(now), timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const result=await sdk('read',{tenant:(app||graphApp()).tenant,login_hint:config.microsoft_account,from:w.from.toISOString(),to:w.to.toISOString(),timezone});
+      if(!result.ok)return {...result,provider,error:result.note};
+      return {...result,timezone,from:w.from.toISOString(),to:w.to.toISOString(),calendar:result.calendar.map(eventOf)};
+    }
     if (!store.load()?.refresh_token) return { ok: false, skipped: true, note: 'Graph is not signed in' };
     const w = calendarWindow(now);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const events = await calendar(app || graphApp(), store, { ...w, fetchImpl, timezone });
     return { ok: true, timezone, from: w.from.toISOString(), to: w.to.toISOString(), calendar: events };
-  } catch (e) { return { ok: false, error: String(e.message || e).slice(0, 200) }; }
+  } catch (e) { return { ok: false, provider, error: String(e.message || e).slice(0, 200) }; }
 }
 
 // The window the collector asks for: the last 2 days to the next 7, the same as `social`
@@ -157,7 +180,15 @@ export function calendarWindow(now = new Date(), back = 2, ahead = 7) {
 }
 
 async function cli(cmd, arg) {
+  if (!['login','status','calendar'].includes(cmd)) throw new Error('usage: node graph.mjs login | status | calendar [days]');
   const app = graphApp(), store = fileStore();
+  if (config.graph?.provider === 'microsoft-sdk') {
+    const w=calendarWindow();
+    const result=await runSDK(cmd==='login'?'login':cmd==='status'?'status':'read',{tenant:app.tenant,login_hint:config.microsoft_account,from:w.from.toISOString(),to:w.to.toISOString(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone});
+    if(!result.ok)throw new Error([result.note||'Graph SDK sign-in did not complete',result.code,result.aad_code,result.error_type].filter(Boolean).join(' | '));
+    console.log(JSON.stringify({ok:true,provider:'microsoft-sdk',account:result.account,calendar_events:result.calendar?.length,mail_read_ok:result.mail_read_ok}));
+    return;
+  }
   if (cmd === 'login') {
     const done = await deviceLogin(app, store, { onCode: c => {
       mkdirSync(CACHE, { recursive: true });

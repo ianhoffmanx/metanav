@@ -12,6 +12,13 @@ export function captureSources(inputs) {
     { name: 'GitHub', ok: !!inputs.github?.ok, note: inputs.github?.error || (inputs.github?.ok ? 'Captured successfully.' : 'Collection did not complete.') },
   ];
   if (inputs.ado && !inputs.ado.skipped) sources.push({ name: 'Azure DevOps', ok: !!inputs.ado.ok, note: inputs.ado.error || (inputs.ado.ok ? 'Captured successfully.' : 'Collection did not complete.') });
+  if (inputs.graph?.provider === 'microsoft-sdk') {
+    const graph=inputs.graph, ok=!!graph.ok && Array.isArray(graph.calendar);
+    const needsSignin=graph.skipped || graph.code === 'signin_required';
+    sources.push({name:'Calendar',ok,note:ok ? 'Captured successfully.' : needsSignin
+      ? 'Graph sign-in is required. Open Meta-Nav Calendar Sign-in on your desktop.'
+      : (graph.error || graph.note || 'Calendar collection did not complete.')});
+  }
   return sources;
 }
 export function captureComplete(inputs) { return captureSources(inputs).every(source => source.ok); }

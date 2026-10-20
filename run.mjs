@@ -69,7 +69,7 @@ const collected = [`${collect.stdout || ''}${collect.stderr || ''}`.trim(),
 
 let inputs = null;
 try { inputs = JSON.parse(read(INPUTS)); } catch {}
-const sources = inputs ? captureSources(inputs) : missingSources(!!config.ado);
+const sources = inputs ? captureSources(inputs) : missingSources(!!config.ado, config.graph?.provider === 'microsoft-sdk');
 const collection_complete = !!inputs && collect.status === 0 && captureComplete(inputs);
 writeFileSync(join(OUT, 'signin-status.json'), JSON.stringify(signinEvidence(inputs || {})));
 let earlyAlert = false;
@@ -169,7 +169,7 @@ for (const f of readdirSync(join(OUT, 'logs'))) {
 } catch (error) {
   log = { ...(log || {}), is_error:true, collection_complete:false,
     result:'Meta-Nav could not complete this refresh; previous information is retained.',
-    runner_error:String(error.message || error).slice(0,1000), sources:missingSources(!!config.ado) };
+    runner_error:String(error.message || error).slice(0,1000), sources:missingSources(!!config.ado, config.graph?.provider === 'microsoft-sdk') };
   try { repaint(false, log.sources); } catch {}
   try { log.notification_sent=notify(failureMessage(log)); } catch {}
   writeFileSync(join(OUT,'logs',`${stamp}.json`),JSON.stringify(log,null,1));

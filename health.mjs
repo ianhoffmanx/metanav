@@ -12,11 +12,12 @@ export function freshSignin(signin, now = Date.now()) {
   if (!Number.isFinite(Date.parse(signin.at)) || now - Date.parse(signin.at) > 90 * 60000) return { ...signin, status:'stale', message:'Microsoft sign-in has not been checked in the last 90 minutes. Click SYNC NOW.' };
   return signin;
 }
-export function missingSources(adoEnabled = false) {
-  return ['Outlook','Teams','GitHub',...(adoEnabled?['Azure DevOps']:[])].map(name=>({name,ok:false,note:'Collection did not finish; the previous information is retained.'}));
+export function missingSources(adoEnabled = false, graphEnabled = false) {
+  return ['Outlook','Teams','GitHub',...(adoEnabled?['Azure DevOps']:[]),...(graphEnabled?['Calendar']:[])].map(name=>({name,ok:false,note:'Collection did not finish; the previous information is retained.'}));
 }
 export function failureMessage(log) {
   const failed = (log.sources || []).filter(s=>!s.ok);
+  if (failed.some(s=>s.name === 'Calendar' && /sign.in.*required/i.test(s.note))) return 'Calendar sign-in is required. Open Meta-Nav Calendar Sign-in on your desktop and choose your SSW account. Other source failures are shown in Meta-Nav.';
   if (failed.some(s=>/sign.in.*required/i.test(s.note))) return 'Microsoft sign-in expired. Open Meta-Nav, click SIGN IN, and complete sign-in in its Chrome window.';
   return failed.length ? `${failed.map(s=>s.name).join(' and ')} could not be checked. Open Meta-Nav and click SYNC NOW. Previous information may be out of date.`
     : 'Meta-Nav could not update your action list. Open Meta-Nav and click SYNC NOW. Previous information may be out of date.';

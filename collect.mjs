@@ -293,8 +293,9 @@ const fetched = await fetching;
 out.github = fetched.github;
 out.ado = fetched.ado;
 // Direct Microsoft Graph calendar (delegated, read-only) when `node graph.mjs login` has been done; otherwise skipped. It
-// never fails a run: its state is in `graph`, and none of the four sources depends on it.
-out.graph = await withDeadline(graphInputs(), 20000, 'Graph calendar').catch(e => ({ ok: false, error: String(e.message || e).slice(0, 200) }));
+// becomes a visible Calendar source when the SDK provider is enabled; legacy unconfigured access stays optional.
+out.graph = await withDeadline(graphInputs(), config.graph?.provider === 'microsoft-sdk' ? 50000 : 20000, 'Graph calendar').catch(e => ({ ok: false, error: String(e.message || e).slice(0, 200) }));
+if (config.graph?.provider === 'microsoft-sdk') out.graph.provider = 'microsoft-sdk';
 out.pr_states = await timed('PR states', () => prStates(prev, out.mail, out.teams, out.github || {}));
 out.issue_states = await timed('issue states', () => issueStates(prev, out.github || {}));
 // Azure DevOps work items and PRs carried over from the last run that aren't in this run's lists, the same way
