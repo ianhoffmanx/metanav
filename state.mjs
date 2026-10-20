@@ -10,6 +10,7 @@
 //                 The panel's SYNC NOW button: a run now, whatever the hour (busy if one is running, or a sign-in window is open).
 // Writes <output dir>/state.json (read by each run, JUDGE.md step 5) and state.js (the same, for the page's <script> tag).
 import { spawn } from 'node:child_process';
+import { completionHook } from './completion-hook.mjs';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { appOf, devtoolsEndpoint, recognizedApps } from './microsoft.mjs';
@@ -27,6 +28,7 @@ const KEYS = ['tower:dismissed', 'tower:read'];
 const STATE = join(OUT, 'state.json');
 const signing = new Set();   // what's being signed in to right now, so a second click doesn't open a second window
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const exportCompleted = completionHook(config.exporter?.script);
 
 function load() {
   try { return JSON.parse(readFileSync(STATE, 'utf8')); } catch { return { rev: 0 }; }
@@ -48,7 +50,7 @@ function start(manual) {
   if (manual) writeFileSync(join(OUT, '.manual'), '');
   activeRun = spawn(process.execPath, [join(SKILL, 'run.mjs')], { detached: true, stdio: 'ignore', windowsHide: true });
   activeRun.once('error', () => { activeRun = null; });
-  activeRun.once('exit', () => { activeRun = null; });
+  activeRun.once('exit', () => { activeRun = null; exportCompleted(); });
   activeRun.unref();
 }
 const refresh = () => start(true);
@@ -174,6 +176,7 @@ const server = createServer((req, res) => {
     state[body.key] = body.value;
     state.rev = (state.rev || 0) + 1;   // lets an open page tell that another browser changed something
     save(state);
+    exportCompleted();
     reply(res, 200, state);
   });
 });
