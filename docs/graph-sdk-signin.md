@@ -101,3 +101,37 @@ Administrator fallback if the Reader registration is approved later: Web redirec
 `http://localhost:47616/auth/callback`, using authorization code with PKCE and the existing
 confidential client secret. Implicit grants stay disabled. This endpoint is reserved for that
 future implementation; the working SDK provider uses its own already-registered loopback redirect.
+
+## Final service and export proof — 20 October 2026
+
+The normal service's `20261020-1052.json` log records `is_error: false` and
+`collection_complete: true`. Collection took **25.8 seconds**: **130 Inbox + 53 Sent messages**,
+**38 calendar events**, **3 Teams conversations**, and **9 assigned sprint items**. All five
+sources were healthy. There were no Outlook browser stages. The preceding first-run diagnostic
+included 11 additional older flagged Inbox messages, explaining its 141 Inbox count.
+
+Luna (`gpt-6-luna`) wrote panel `20261020-1054.json`: “Prepare the metrics and costs for
+tomorrow’s ScoreApp review, then progress the Friday sprint deliverables.” It contained 15
+queue items, four waiting items, two highlights and one social item. The queue distinguishes
+an explicit Wednesday review deadline from “Sprint ends Fri 23/10”, and ASF production from
+planning. `.last-run` advanced to `2026-10-20T00:52:46Z` and `/status` reported both apps ready.
+
+The existing Meta-Nav Hermes task delivered `hermes-20261020-1054.json.age` at 00:55:54Z.
+Linux `~/.hermes/plugin-data/metanav/health.json` reported `run_stamp: 20261020-1054`,
+`staleness.status: fresh`, `age_min: 4`, and `schema.status: in-sync`. The Linux health file is
+normally refreshed by the existing hourly tick; it was refreshed manually for this check.
+
+Both Windows checkouts use `fix/ian-marketing-windows` and the same commits. The project
+checkout's original WIP branch remains at `b206e66`; its local dotenv-ignore change was stashed,
+its previous ignored config was backed up under LocalAppData, and its `.env` remains in place
+and ignored. Both origins point to Ian's fork; upstream pushes are disabled. No push was made.
+The logon/hourly task's action and schedule are unchanged. Only the resident service process
+was restarted; Chrome remained PID 39336. The manual Graph login task/shortcut remains, and
+temporary Graph inspection/verification tasks were removed. Project dependencies were installed
+from the lockfile with package install scripts disabled.
+
+Mail and calendar now require no browser collection, so keep the dedicated visible Chrome only
+for Teams. The new API path does not prove an indefinitely valid Teams browser session. Nor
+does this resolve the unproven root cause of the older 17 October post-summary collector hang;
+the existing resource/stage diagnostics remain. The newly observed SDK subprocess surviving
+its outer deadline is separately fixed and covered by a termination test.
