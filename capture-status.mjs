@@ -3,7 +3,7 @@ export function captureSources(inputs) {
   const browser = (name, data, ready) => {
     const ok = !!data && !data.error && !data.signin_needed && ready(data);
     return { name, ok, note: ok ? 'Captured successfully.' : data?.signin_needed
-      ? 'Microsoft sign-in is required in the Meta-Nav browser.'
+      ? (data?.provider === 'microsoft-sdk' ? 'Graph sign-in is required. Open Meta-Nav Calendar Sign-in on your desktop.' : 'Microsoft sign-in is required in the Meta-Nav browser.')
       : (data?.error || 'Collection did not complete.') };
   };
   const sources = [

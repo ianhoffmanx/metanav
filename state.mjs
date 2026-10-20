@@ -14,9 +14,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { createServer } from 'node:http';
 import { appOf, devtoolsEndpoint, recognizedApps } from './microsoft.mjs';
 import { join } from 'node:path';
-import { OUT, PROFILE, SKILL, chromePath, tool } from './common.mjs';
+import { OUT, PROFILE, SKILL, config, chromePath, tool } from './common.mjs';
 import { recoverTargets } from './cdp.mjs';
 import { freshSignin } from './health.mjs';
+import { browserArgs } from './browser-args.mjs';
+import { graphSigninSource } from './graph-mail.mjs';
+import { runSDK } from './graph-sdk.mjs';
+import { graphApp } from './graph.mjs';
 
 const PORT = 47615;
 const KEYS = ['tower:dismissed', 'tower:read'];
@@ -65,6 +69,7 @@ setInterval(() => {
 // A visible window on the runs' own profile, at Outlook and Teams: a new profile may have to pick the account for
 // Teams once. Keep regular Chrome open for collection to reuse its authenticated tabs and proxy origins.
 async function signInMicrosoft() {
+  const browserApps = config.graph?.provider === 'microsoft-sdk' && config.graph?.mail !== false ? ['teams'] : ['outlook','teams'];
   const chrome = chromePath();
   if (!chrome) throw new Error('Google Chrome was not found');
   mkdirSync(PROFILE, { recursive: true });
@@ -80,14 +85,13 @@ async function signInMicrosoft() {
     await recoverTargets(endpoint, { application: appOf });
     // Reuse the live profile. Deleting its port file or trusting a second Chrome
     // launch's exit loses the browser that actually owns the signed-in session.
-    for (const [app, url] of [['outlook', 'https://outlook.office.com/mail/inbox'], ['teams', 'https://teams.microsoft.com/v2/']]) {
+    for (const [app, url] of [['outlook', 'https://outlook.office.com/mail/inbox'], ['teams', 'https://teams.microsoft.com/v2/']].filter(([app])=>browserApps.includes(app))) {
       if (!pages.some(p => p.type === 'page' && appOf(p.url) === app)) {
         await fetch(endpoint + '/json/new?' + encodeURI(url), { method: 'PUT', signal: AbortSignal.timeout(5000) });
       }
     }
   } else {
-    const child = spawn(chrome, [`--user-data-dir=${PROFILE}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
-      'https://outlook.office.com/mail/inbox', 'https://teams.microsoft.com/v2/'], { detached: true, stdio: 'ignore' });
+    const child = spawn(chrome, browserArgs(PROFILE,{apps:browserApps}), { detached: true, stdio: 'ignore' });
     child.on('error', e => report('error', { message: e.message }));
     child.unref();
   }
@@ -99,7 +103,7 @@ async function signInMicrosoft() {
       pages = await (await fetch(endpoint + '/json', { signal: AbortSignal.timeout(3000) })).json();
       const apps = recognizedApps(pages);
       report('waiting', apps);
-      if (apps.outlook && apps.teams) { report('checking', apps); return true; }
+      if (browserApps.every(app=>apps[app])) { report('checking', apps); return true; }
     } catch {}
   }
   report('timed_out', recognizedApps(pages));
@@ -116,13 +120,18 @@ function signInAzure() {
   return tool('az', ['login', '--output', 'none', ...(tenant ? ['--tenant', tenant] : [])], { env, timeout: 600e3 }).status === 0;
 }
 
+async function signInGraph() {
+  const result=await runSDK('login',{tenant:graphApp().tenant,login_hint:config.microsoft_account});
+  if(!result.ok)throw Error(result.note||'Microsoft Graph sign-in did not complete.');
+  return true;
+}
 function signIn(source) {
   const what = source === 'Azure DevOps' ? 'azure' : 'microsoft';
   // a run holds the browser profile while it reads Outlook and Teams
   if (signing.has(what) || (what === 'microsoft' && existsSync(join(OUT, '.running')))) return 'busy';
   signing.add(what);
   (async () => {
-    try { if (await (what === 'azure' ? signInAzure() : signInMicrosoft())) refresh(); }
+    try { if (await (what === 'azure' ? signInAzure() : graphSigninSource(source,config) ? signInGraph() : signInMicrosoft())) refresh(); }
     catch (e) { write(join(OUT, 'signin-status.json'), JSON.stringify({ status: 'error', message: String(e.message || e), at: new Date().toISOString() })); }
     finally { signing.delete(what); }
   })();
@@ -146,7 +155,7 @@ const server = createServer((req, res) => {
     let body;
     try {
       body = JSON.parse(raw || '{}');
-      if (req.url === '/signin' && !['Azure DevOps', 'Outlook', 'Teams'].includes(body.source)) throw 0;
+      if (req.url === '/signin' && !['Azure DevOps', 'Outlook', 'Teams', 'Calendar'].includes(body.source)) throw 0;
       if (req.url === '/state' && (!KEYS.includes(body.key) || typeof body.value !== 'object' || !body.value || Array.isArray(body.value))) throw 0;
     } catch { return reply(res, 400); }
     if (req.url === '/signin') return reply(res, 200, { status: signIn(body.source) });

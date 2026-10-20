@@ -5,10 +5,12 @@ import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const HERE=dirname(fileURLToPath(import.meta.url));
 export const SDK_CLIENT_ID='14d82eec-204b-4c2f-b7e8-296a70dab67e';
-export function sdkRequest(action, {tenant, login_hint, from, to, timezone}={}) {
+export function sdkRequest(action, {tenant, login_hint, from, to, timezone, mail_since, mail_folders, first}={}) {
   if(!['login','read','status'].includes(action))throw Error('Unsupported Graph SDK action');
   if(!/^[a-zA-Z0-9.-]+$/.test(tenant||''))throw Error('Graph tenant is missing or invalid');
-  return {tenant,login_hint,from,to,timezone};
+  if(mail_since && !Number.isFinite(Date.parse(mail_since)))throw Error('Invalid Graph mail window');
+  if(mail_folders && (!Array.isArray(mail_folders)||mail_folders.some(f=>!f.name||!f.id||typeof f.id!=='string')))throw Error('Invalid Graph mail folders');
+  return {tenant,login_hint,from,to,timezone,mail_since,first:!!first,mail_folders:mail_folders?.map(({name,id,sent})=>({name,id,sent:!!sent}))};
 }
 export function runSDK(action, options={}, {spawnImpl=spawn,powershell=process.platform==='win32'?join(process.env.ProgramFiles||'C:\\Program Files','PowerShell','7','pwsh.exe'):'pwsh',timeout=action==='login'?330000:action==='read'?45000:60000}={}) {
   const payload=sdkRequest(action,options);
@@ -16,7 +18,7 @@ export function runSDK(action, options={}, {spawnImpl=spawn,powershell=process.p
     const child=spawnImpl(powershell,['-NoLogo','-NoProfile','-File',join(HERE,'windows','graph-sdk.ps1'),'-Action',action],{windowsHide:action!=='login',stdio:['pipe','pipe','pipe']});
     let output='',finished=false;
     const finish=(error,value)=>{if(finished)return;finished=true;clearTimeout(timer);error?reject(error):resolve(value)};
-    const timer=setTimeout(()=>{child.kill();finish(Error('Graph SDK timed out; the previous sign-in was retained.'))},timeout);
+    const timer=setTimeout(()=>{child.kill();finish(Error('Graph SDK timed out; the saved session was retained.'))},timeout);
     child.once('error',()=>finish(Error('Graph SDK could not start. Install PowerShell 7 and Microsoft.Graph.Authentication.')));
     child.stdout.on('data',chunk=>{output+=chunk;if(output.length>32<<20){child.kill();finish(Error('Graph SDK output exceeded its collection limit.'))}});
     // SDK stderr can contain authentication details: never forward it into run logs.

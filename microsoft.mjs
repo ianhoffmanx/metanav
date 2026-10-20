@@ -60,7 +60,7 @@ export async function connectMicrosoftBrowser(chromium, profile, executable, acc
         const browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 });
         return { browser, context: browser.contexts()[0] };
       } catch {
-        throw new Error('Meta-Nav Chrome is open but not responding. Close its dedicated window and click SIGN IN.');
+        throw new Error('Could not attach to Meta-Nav Chrome: it is open but not responding. Close only its dedicated window, then use SIGN IN to reopen it.');
       }
     }
   }
@@ -87,7 +87,7 @@ export async function connectMicrosoftBrowser(chromium, profile, executable, acc
           for (const page of context.pages()) await continueSavedAccount(page);
           const pages = await Promise.all(context.pages().map(async p => ({ url: p.url(), title: await p.title().catch(() => '') })));
           const apps = recognizedApps(pages);
-          if (apps.outlook && apps.teams) break;
+          if ((options.apps || ['outlook','teams']).every(app=>apps[app])) break;
           await sleep(500);
         }
         return { browser, context };

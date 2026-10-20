@@ -4,7 +4,7 @@ export function signinEvidence(inputs, now = new Date()) {
   const outlook = check(inputs.mail), teams = check(inputs.teams);
   const status = [outlook, teams].includes('required') ? 'required' : [outlook, teams].every(x => x === 'ready') ? 'ready' : 'error';
   return { status, apps: { outlook: outlook === 'ready', teams: teams === 'ready' }, at: now.toISOString(),
-    message: status === 'required' ? 'Click SIGN IN in Meta-Nav, then complete Microsoft sign-in in its Chrome window.'
+    message: inputs.mail?.provider === 'microsoft-sdk' && inputs.mail.signin_needed ? 'Mail/calendar sign-in is required. Open Meta-Nav Calendar Sign-in on your desktop. Teams has its own browser status.' : inputs.mail?.provider === 'microsoft-sdk' && teams === 'required' ? 'Teams browser sign-in is required. Mail and calendar use the separate Graph connection.' : status === 'required' ? 'Click SIGN IN in Meta-Nav, then complete Microsoft sign-in in its Chrome window.'
       : status === 'error' ? 'Microsoft collection could not be verified. Click SYNC NOW to check again.' : 'Outlook and Teams were checked during collection.' };
 }
 export function freshSignin(signin, now = Date.now()) {

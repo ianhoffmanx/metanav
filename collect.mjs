@@ -16,6 +16,7 @@ import { withDeadline } from './deadline.mjs';
 import { marketingPrevious, inGithubScope } from './marketing.mjs';
 import { SOCIAL_WORDS } from './social.mjs';
 import { graphInputs } from './graph.mjs';
+import { graphMailFailure } from './graph-mail.mjs';
 import { openApp, pageForApp, signedIn as sessionSignedIn, connectMicrosoftBrowser } from './microsoft.mjs';
 
 const [SINCE, LOOKBACK, FIRST, PREV, OUT] = process.argv.slice(2);
@@ -273,12 +274,21 @@ const fetching = timed('GitHub + Azure DevOps', () => fetchAll(SINCE, LOOKBACK)
   .catch(e => ({ github: { ok: false, error: String(e.message || e).slice(0, 200) }, ado: { ok: false } })));
 
 const out = { collected_at: new Date().toISOString(), since: SINCE, lookback: LOOKBACK, first_run: FIRST === 'yes' };
+const sdkMail=config.graph?.provider === 'microsoft-sdk' && config.graph?.mail !== false;
+if(sdkMail){
+  out.graph=await timed('Graph mail + calendar',()=>withDeadline(graphInputs({mailSince:LOOKBACK,first:FIRST==='yes'}),50000,'Graph mail and calendar')
+    .catch(e=>({ok:false,provider:'microsoft-sdk',error:String(e.message||e).slice(0,200)})));
+  out.mail=out.graph.mail||graphMailFailure(out.graph);
+  delete out.graph.mail; // Mail belongs in one place in Luna's inputs.
+}
 let context, browser, attached = false;
 try {
-  ({ browser, context } = await timed('browser attach', () => connectMicrosoftBrowser(chromium, PROFILE, chromePath(), config.microsoft_account, config.browser || {})));
+  ({ browser, context } = await timed('browser attach', () => connectMicrosoftBrowser(chromium, PROFILE, chromePath(), config.microsoft_account, {...(config.browser||{}),...(sdkMail?{apps:['teams']}:{})})));
   attached = true;
-  const page = await timed('Outlook tab', () => pageForApp(context, 'outlook'));
-  out.mail = await withDeadline(outlook(page, prev), 195000, 'Outlook collection').catch(e => ({ error: String(e.message || e).slice(0, 200) }));
+  if(!sdkMail){
+    const page = await timed('Outlook tab', () => pageForApp(context, 'outlook'));
+    out.mail = await withDeadline(outlook(page, prev), 195000, 'Outlook collection').catch(e => ({ error: String(e.message || e).slice(0, 200) }));
+  }
   const teamsPage = await timed('Teams tab', () => pageForApp(context, 'teams'));
   out.teams = await withDeadline(teams(teamsPage), 70000, 'Teams collection').catch(e => ({ error: String(e.message || e).slice(0, 200) }));
   // Sign-in is explicit through the service; collection never launches repeated login windows.
@@ -294,7 +304,7 @@ out.github = fetched.github;
 out.ado = fetched.ado;
 // Direct Microsoft Graph calendar (delegated, read-only) when `node graph.mjs login` has been done; otherwise skipped. It
 // becomes a visible Calendar source when the SDK provider is enabled; legacy unconfigured access stays optional.
-out.graph = await withDeadline(graphInputs(), config.graph?.provider === 'microsoft-sdk' ? 50000 : 20000, 'Graph calendar').catch(e => ({ ok: false, error: String(e.message || e).slice(0, 200) }));
+out.graph ||= await withDeadline(graphInputs(), config.graph?.provider === 'microsoft-sdk' ? 50000 : 20000, 'Graph calendar').catch(e => ({ ok: false, error: String(e.message || e).slice(0, 200) }));
 if (config.graph?.provider === 'microsoft-sdk') out.graph.provider = 'microsoft-sdk';
 out.pr_states = await timed('PR states', () => prStates(prev, out.mail, out.teams, out.github || {}));
 out.issue_states = await timed('issue states', () => issueStates(prev, out.github || {}));

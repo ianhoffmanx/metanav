@@ -70,23 +70,52 @@ try {
  Mark-Stage 'token acquired'
  $headers=@{Authorization=('Bearer '+$token.Token);Prefer=('outlook.timezone="'+[string]$request.timezone+'", outlook.body-content-type="text"')}
  if($Action -eq 'status'){Report @{ok=$true;provider='microsoft-sdk';account=$options.AuthenticationRecord.Username;scopes=@('Calendars.Read','Mail.Read')};exit 0}
- $from=[Uri]::EscapeDataString([string]$request.from)
- $to=[Uri]::EscapeDataString([string]$request.to)
- $url='https://graph.microsoft.com/v1.0/me/calendarView?startDateTime='+$from+'&endDateTime='+$to+'&$top=100&$orderby=start/dateTime&$select=id,subject,start,end,isAllDay,isCancelled,location,organizer,showAs,responseStatus,onlineMeeting,webLink,bodyPreview'
- $events=[Collections.Generic.List[object]]::new()
- for($page=0;$url -and $page -lt 10;$page++){
-  if(([Uri]$url).Host -ne 'graph.microsoft.com'){throw 'Refusing an unexpected Graph pagination host'}
-  Mark-Stage ('calendar page '+$page)
-  $result=Invoke-RestMethod -Method Get -Uri $url -Headers $headers -TimeoutSec 20
-  foreach($item in $result.value){$events.Add($item)}
-  $url=$result.'@odata.nextLink'
+ function Read-GraphPages([string]$url){
+  $items=[Collections.Generic.List[object]]::new()
+  for($page=0;$url -and $page -lt 10;$page++){
+   if(([Uri]$url).Scheme -ne 'https' -or ([Uri]$url).Host -ne 'graph.microsoft.com'){throw 'Refusing an unexpected Graph pagination host'}
+   $result=Invoke-RestMethod -Method Get -Uri $url -Headers $headers -TimeoutSec 15
+   foreach($item in $result.value){$items.Add($item)}
+   $url=$result.'@odata.nextLink'
+  }
+  if($url){throw 'The Graph window exceeded the collection limit'}
+  return ,$items.ToArray()
  }
- if($url){throw 'The calendar window exceeded the collection limit'}
- # A read-only access check; mail contents stay out of this diagnostic response.
- Mark-Stage 'mail check'
- $mail=Invoke-RestMethod -Method Get -Uri 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=1&$select=id' -Headers $headers -TimeoutSec 20
+ $calendarOk=$true;$calendarError=$null;$events=@()
+ try {
+  Mark-Stage 'calendar read'
+  $from=[Uri]::EscapeDataString([string]$request.from)
+  $to=[Uri]::EscapeDataString([string]$request.to)
+  $url='https://graph.microsoft.com/v1.0/me/calendarView?startDateTime='+$from+'&endDateTime='+$to+'&$top=100&$orderby=start/dateTime&$select=id,subject,start,end,isAllDay,isCancelled,location,organizer,showAs,responseStatus,onlineMeeting,webLink,bodyPreview'
+  $events=Read-GraphPages $url
+ } catch {$calendarOk=$false;$calendarError='Graph calendar collection failed.'}
+ $rawMail=$null;$mailOk=$false
+ if($request.mail_folders){
+  $rawMail=@{ok=$true;folders=@{}}
+  try {
+   if(-not $request.mail_since){throw 'Mail window is missing'}
+   $since=([DateTimeOffset]::Parse($request.mail_since)).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+   $select='id,conversationId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,hasAttachments,bodyPreview,webLink'
+   foreach($folder in $request.mail_folders){
+    Mark-Stage ('mail '+$folder.name)
+    $dateField=if($folder.sent){'sentDateTime'}else{'receivedDateTime'}
+    $base='https://graph.microsoft.com/v1.0/me/mailFolders/'+[Uri]::EscapeDataString([string]$folder.id)+'/messages?$top=100&$select='+$select
+    $url=$base+'&$filter='+[Uri]::EscapeDataString($dateField+' ge '+$since)+'&$orderby='+$dateField+' desc'
+    $messages=Read-GraphPages $url
+    if($request.first -and -not $folder.sent){
+     $flagged=Read-GraphPages ($base+'&$filter='+[Uri]::EscapeDataString("flag/flagStatus eq 'flagged'"))
+     $messages+=@($flagged)
+    }
+    $rawMail.folders[$folder.name]=@{sent=[bool]$folder.sent;messages=@($messages)}
+   }
+   $mailOk=$true
+  } catch {$rawMail.ok=$false;$rawMail.error='Graph mail collection failed.'}
+ } else {
+  Mark-Stage 'mail check'
+  try {$null=Invoke-RestMethod -Method Get -Uri 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=1&$select=id' -Headers $headers -TimeoutSec 15;$mailOk=$true}catch{}
+ }
  Mark-Stage 'complete'
- Report @{ok=$true;provider='microsoft-sdk';calendar=@($events.ToArray());mail_read_ok=$true;account=$options.AuthenticationRecord.Username}
+ Report @{ok=$calendarOk;provider='microsoft-sdk';calendar=@($events);error=$calendarError;mail=$rawMail;mail_read_ok=$mailOk;account=$options.AuthenticationRecord.Username}
 } catch {
  Mark-Stage 'failed'
  $chain='';$errorType='';$ex=$_.Exception

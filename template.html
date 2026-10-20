@@ -676,13 +676,13 @@ const collage = (text, seed, cls = '') => {
 };
 
 // A source that needs signing in gets a SIGN IN button. Meta-Nav's helper (state.py) opens the sign-in outside the terminal
-// and refreshes once it works, so the banner goes by itself. Outlook and Teams sign in together: one button for both.
+// and refreshes once it works. Graph mail/calendar and the Teams browser have separate sign-ins.
 const signinSaid = {};   // what the button says after a click, kept across the 30s repaints
 const banner = V => {
   if (!V.failed.length) return '';
   const shown = new Set();
   const items = V.failed.map(s => {
-    const kind = s.name === 'Azure DevOps' ? 'azure' : 'microsoft';
+    const kind = s.name === 'Azure DevOps' ? 'azure' : s.name === 'Calendar' || /^Graph sign-in/.test(s.note || '') ? 'graph' : 'microsoft';
     const btn = /sign.?in|log.?in/i.test(s.note || '') && !shown.has(kind) && shown.add(kind)
       ? ` <button class="alert-go" data-signin="${e(s.name)}" ${signinSaid[s.name] ? 'disabled' : ''}>${e(signinSaid[s.name] || 'SIGN IN')}</button>` : '';
     return `<span class="alert-i">${e(s.name)} offline${s.note ? ` (${e(s.note)})` : ''}${btn}</span>`;

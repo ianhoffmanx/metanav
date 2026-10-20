@@ -99,7 +99,7 @@ Read `INPUTS`, `PREV`, `STATE` and `CONFIG` (who the user is, their projects, wh
 
 ## Step 3: Outlook — `mail`
 
-The collector reads the mail lists and never opens a message (opening one marks it read). `mail.signin_needed: true` means Outlook sat on Microsoft's sign-in page for 20 seconds (a passing session renewal gets that long to come back): mark Outlook — and Teams, which shares the sign-in — `ok: false, note: "sign-in needed"` (the panel's SIGN IN button opens a window for the user), carry their previous items over unchanged, and finish the run. Never type credentials. `mail.error` → `ok: false` with a short note.
+When `mail.provider` is `microsoft-sdk`, mail is read directly through Graph with GET requests, which do not mark it read. It uses the separate Graph sign-in; a Teams browser failure does not make Graph mail fail. `mail.signin_needed` then means the SDK could not renew silently: use the dedicated desktop sign-in instruction from CURRENT_SOURCE_STATUS. Otherwise mail comes from the Outlook browser lists, without opening messages; `mail.signin_needed` means its browser session needs attention. In either case, source status comes only from CURRENT_SOURCE_STATUS. Never infer a Teams failure from Outlook or a mail failure from Teams. A failed source is unknown: preserve unresolved asks, and never type credentials. `mail.error` is the collector's sanitized failure reason.
 
 ### 3a. Mail folders — `mail.folders`
 
@@ -124,6 +124,8 @@ Links and identity for mail items:
   - Received mail in a subfolder → the folder's URL from `config.json`.
   - A loop from Sent whose conversation **also has mail in the Inbox** (someone replied) → the Inbox link; it opens the whole thread. Otherwise → the Sent folder URL.
 
+**Graph mail (`mail.provider: "microsoft-sdk"`):** the same folder/row shape is supplied, reading the full lookback plus older flags on a first run. Rows additionally carry `at` (ISO), `subject`, `from`, `to`, `cc`, `preview`, and Microsoft's own `url` deep link. Prefer that URL as supplied for any folder; do not rebuild one from `convid`. Several messages can share one conversation ID: combine their evidence into one matter, preserving the existing panel ID when it is the same ask. Arrival time is not a deadline. Read and unread messages are both eligible. A GET does not mark mail read. If `deletion_evidence` is false, **absence never proves deletion or completion**: the read has a bounded lookback and the source is migrating from browser IDs. Keep previous unresolved asks unless a reply, delivery, explicit cancellation or Ian's click closes them. Deduplicate by deliverable, people and subject when an old browser ID differs. A failed or truncated mail read must not close anything. Graph errors refer to the dedicated desktop sign-in shortcut only when CURRENT_SOURCE_STATUS explicitly says sign-in is required.
+
 ### 3b. Today's calendar — `mail.calendar`
 
 Each label is `Title, 9:30 AM to 9:45 AM, Friday, September 25, 2026, [location], By <organizer>, Busy, [Recurring event]`. Convert to 24h `HH:MM`. Drop `Canceled` / `Declined` events, other people's leave / out-of-office notices (shown as `Free`, organised by someone else), and personal blocks (titles containing an entry of `config.calendar.skip_events`). The whole day goes in `calendar` every run; it's what 5c ranks the queue around.
@@ -134,7 +136,7 @@ When Ian has signed Meta-Nav in to Microsoft Graph, `graph.ok` is true and `grap
 - **`social`:** a birthday morning tea, farewell drinks or team lunch on the calendar is a `social` item (`id` `cal:<id>`, `url` the entry's `url`, `where` its `location`, `detail` from `preview` if it says anything). Skip `cancelled` entries; an entry already in `social` as an invite or Teams post is the same occasion — keep one.
 - **Meetings:** prep and follow-up rules are unchanged — only an agenda, an ask or a promise creates work. A meeting later in the week with a clear agenda in `preview` can justify a prep row; its date is the `due`.
 - **Today's `calendar` section:** keep building it from `mail.calendar`. Only when that list is empty or failed and `graph.ok` is true, fill it from today's `graph.calendar` entries (`start`/`end` as `HH:MM`, `all_day`, not cancelled).
-- **If `graph.ok` is false** (`graph.skipped` — not signed in — or `graph.error`), ignore it: it is not one of the four sources, never goes in `sources`, and is never evidence that anything is missing.
+- **If `graph.ok` is false**, never infer that meetings or asks disappeared. With the SDK provider enabled, Calendar is a monitored source: copy its current status from CURRENT_SOURCE_STATUS. Otherwise an unconfigured legacy Graph reader remains optional. Outlook mail and Calendar can succeed or fail independently; Teams keeps its own browser status.
 
 ## Step 4: Teams — `teams`
 
