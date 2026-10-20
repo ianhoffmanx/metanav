@@ -14,6 +14,7 @@ import { captureSources, captureComplete } from './capture-status.mjs';
 import { notify } from './notifications.mjs';
 import { OUT, SKILL, WIN, config, tool } from './common.mjs';
 import { normaliseSocial } from './social.mjs';
+import { attachBoardContext } from './board-context.mjs';
 
 // Sections whose items get a "+NEW" flag when they weren't in the previous run ("done": closed since the last run)
 const TRACKED = ['queue', 'waiting', 'highlights', 'done'];
@@ -52,6 +53,7 @@ export function renderBrief(briefFile, inputsFile) {
   // The run doesn't copy GitHub's "my work" and review requests into the brief; they come straight from the collector.
   if (inputsFile) {
     const inputs = JSON.parse(readFileSync(inputsFile, 'utf8'));
+    attachBoardContext(brief, inputs);
     brief.sources = captureSources(inputs);
     complete = captureComplete(inputs);
     const gh = inputs.github || {};

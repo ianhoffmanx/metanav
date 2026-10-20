@@ -8,6 +8,7 @@ test('SDK payload contains only tenant and collection facts, never the Reader se
  assert.equal('secret' in request,false);assert.equal('id' in request,false);
  assert.throws(()=>sdkRequest('delete',{tenant:'tenant'}),/Unsupported/);
  assert.throws(()=>sdkRequest('login',{tenant:'bad/tenant'}),/invalid/);
+ assert.throws(()=>sdkRequest('read',{tenant:'tenant',tracked_conversations:["x' or true"]}),/Invalid tracked/);
  assert.match(SDK_CLIENT_ID,/^[a-f0-9-]+$/);
 });
 test('SDK runs an executable directly, restricts actions, and does not expose authentication stderr',async()=>{

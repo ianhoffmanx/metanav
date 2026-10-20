@@ -95,7 +95,7 @@ try {
   try {
    if(-not $request.mail_since){throw 'Mail window is missing'}
    $since=([DateTimeOffset]::Parse($request.mail_since)).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-   $select='id,conversationId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,hasAttachments,bodyPreview,webLink'
+   $select='id,conversationId,parentFolderId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,hasAttachments,bodyPreview,webLink'
    foreach($folder in $request.mail_folders){
     Mark-Stage ('mail '+$folder.name)
     $dateField=if($folder.sent){'sentDateTime'}else{'receivedDateTime'}
@@ -107,6 +107,23 @@ try {
      $messages+=@($flagged)
     }
     $rawMail.folders[$folder.name]=@{sent=[bool]$folder.sent;messages=@($messages)}
+   }
+   # Previously unresolved asks can have moved to Archive or be older than the
+   # lookback. Resolve only their exact collected conversation IDs, across folders.
+   $known=@($rawMail.folders.Values|Where-Object {-not $_.sent}|ForEach-Object {$_.messages}|ForEach-Object {$_.conversationId})
+   $missing=@($request.tracked_conversations|Where-Object {$_ -and $_ -notin $known})
+   if($missing.Count){
+    $blocked=@('sentitems','deleteditems','drafts')|ForEach-Object {
+     (Invoke-RestMethod -Method Get -Uri ('https://graph.microsoft.com/v1.0/me/mailFolders/'+$_+'?$select=id') -Headers $headers -TimeoutSec 10).id
+    }
+    $tracked=@()
+    foreach($conversation in $missing){
+     if($conversation -notmatch '^[A-Za-z0-9+/_=-]{20,2048}$'){throw 'Invalid tracked conversation'}
+     $filter=[Uri]::EscapeDataString("conversationId eq '"+$conversation+"'")
+     $rows=Read-GraphPages ('https://graph.microsoft.com/v1.0/me/messages?$top=100&$select='+$select+'&$filter='+$filter)
+     $tracked+=@($rows|Where-Object {-not $_.isDraft -and $_.parentFolderId -notin $blocked -and $_.from.emailAddress.address -ine $options.AuthenticationRecord.Username})
+    }
+    $rawMail.folders['Tracked']=@{sent=$false;messages=@($tracked)}
    }
    $mailOk=$true
   } catch {$rawMail.ok=$false;$rawMail.error='Graph mail collection failed.'}

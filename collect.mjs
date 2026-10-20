@@ -276,7 +276,8 @@ const fetching = timed('GitHub + Azure DevOps', () => fetchAll(SINCE, LOOKBACK)
 const out = { collected_at: new Date().toISOString(), since: SINCE, lookback: LOOKBACK, first_run: FIRST === 'yes' };
 const sdkMail=config.graph?.provider === 'microsoft-sdk' && config.graph?.mail !== false;
 if(sdkMail){
-  out.graph=await timed('Graph mail + calendar',()=>withDeadline(graphInputs({mailSince:LOOKBACK,first:FIRST==='yes'}),50000,'Graph mail and calendar')
+  const trackedConversations=[...new Set(prev.mail_ids.map(s=>s.replace(/#others$/,'')))].filter(s=>/^[A-Za-z0-9+/_=-]{20,2048}$/.test(s)).slice(0,12);
+  out.graph=await timed('Graph mail + calendar',()=>withDeadline(graphInputs({mailSince:LOOKBACK,first:FIRST==='yes',trackedConversations}),50000,'Graph mail and calendar')
     .catch(e=>({ok:false,provider:'microsoft-sdk',error:String(e.message||e).slice(0,200)})));
   out.mail=out.graph.mail||graphMailFailure(out.graph);
   delete out.graph.mail; // Mail belongs in one place in Luna's inputs.

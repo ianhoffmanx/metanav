@@ -11,17 +11,19 @@
 // Writes <output dir>/state.json (read by each run, JUDGE.md step 5) and state.js (the same, for the page's <script> tag).
 import { spawn } from 'node:child_process';
 import { completionHook } from './completion-hook.mjs';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { appOf, devtoolsEndpoint, recognizedApps } from './microsoft.mjs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { OUT, PROFILE, SKILL, config, chromePath, tool } from './common.mjs';
 import { recoverTargets } from './cdp.mjs';
 import { freshSignin } from './health.mjs';
 import { browserArgs } from './browser-args.mjs';
 import { graphSigninSource } from './graph-mail.mjs';
 import { runSDK } from './graph-sdk.mjs';
-import { graphApp } from './graph.mjs';
+import { fileStore, graphApp } from './graph.mjs';
+import { replyDrafts } from './reply-drafts.mjs';
+import { readerLogin, readerReply } from './reader-auth.mjs';
 
 const PORT = 47615;
 const KEYS = ['tower:dismissed', 'tower:read'];
@@ -29,6 +31,13 @@ const STATE = join(OUT, 'state.json');
 const signing = new Set();   // what's being signed in to right now, so a second click doesn't open a second window
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const exportCompleted = completionHook(config.exporter?.script);
+async function draftAPI(plan){
+  return readerReply(graphApp(),fileStore(join(dirname(PROFILE),'graph-drafts-token.dat')),plan);
+}
+const createReply=replyDrafts({directory:join(OUT,'draft-receipts'),create:draftAPI,loadRun:()=>{
+  const files=readdirSync(join(OUT,'runs')).filter(f=>/^\d{8}-\d{4}\.json$/.test(f)).sort();
+  return files.length?JSON.parse(readFileSync(join(OUT,'runs',files.at(-1)),'utf8')):{};
+}});
 
 function load() {
   try { return JSON.parse(readFileSync(STATE, 'utf8')); } catch { return { rev: 0 }; }
@@ -128,13 +137,13 @@ async function signInGraph() {
   return true;
 }
 function signIn(source) {
-  const what = source === 'Azure DevOps' ? 'azure' : 'microsoft';
+  const what = source === 'Mail drafts' ? 'drafts' : source === 'Azure DevOps' ? 'azure' : 'microsoft';
   // a run holds the browser profile while it reads Outlook and Teams
   if (signing.has(what) || (what === 'microsoft' && existsSync(join(OUT, '.running')))) return 'busy';
   signing.add(what);
   (async () => {
-    try { if (await (what === 'azure' ? signInAzure() : graphSigninSource(source,config) ? signInGraph() : signInMicrosoft())) refresh(); }
-    catch (e) { write(join(OUT, 'signin-status.json'), JSON.stringify({ status: 'error', message: String(e.message || e), at: new Date().toISOString() })); }
+    try { if (await (source==='Mail drafts' ? readerLogin(graphApp(),fileStore(join(dirname(PROFILE),'graph-drafts-token.dat')),config.microsoft_account) : what === 'azure' ? signInAzure() : graphSigninSource(source,config) ? signInGraph() : signInMicrosoft())) refresh(); }
+    catch (e) { write(join(OUT, source==='Mail drafts'?'draft-signin-status.json':'signin-status.json'), JSON.stringify({ status: 'error', message: source==='Mail drafts'?'Reply draft sign-in did not complete.':String(e.message || e), at: new Date().toISOString() })); }
     finally { signing.delete(what); }
   })();
   return 'started';
@@ -149,17 +158,21 @@ function reply(res, status, obj) {
 const server = createServer((req, res) => {
   // Only the panel itself may call in: a page on disk sends Origin "null"; a website open in the same browser sends its
   // own origin. The Host check keeps out DNS-rebinding tricks.
-  if (req.method !== 'POST' || !['/state', '/signin', '/refresh', '/status'].includes(req.url) || (req.headers.origin ?? 'null') !== 'null'
+  if (req.method !== 'POST' || !['/state', '/signin', '/refresh', '/status','/mail/reply-draft','/mail/draft-status'].includes(req.url) || (req.headers.origin ?? 'null') !== 'null'
     || ![`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host)) return reply(res, 403);
   let raw = '';
   req.on('data', c => { raw += c; if (raw.length > 1 << 22) req.destroy(); });
-  req.on('end', () => {
+  req.on('end', async () => {
     let body;
     try {
       body = JSON.parse(raw || '{}');
-      if (req.url === '/signin' && !['Azure DevOps', 'Outlook', 'Teams', 'Calendar'].includes(body.source)) throw 0;
+      if (req.url === '/signin' && !['Azure DevOps', 'Outlook', 'Teams', 'Calendar','Mail drafts'].includes(body.source)) throw 0;
       if (req.url === '/state' && (!KEYS.includes(body.key) || typeof body.value !== 'object' || !body.value || Array.isArray(body.value))) throw 0;
     } catch { return reply(res, 400); }
+    if(req.url==='/mail/reply-draft'||req.url==='/mail/draft-status'){
+      try{return reply(res,200,await (req.url==='/mail/reply-draft'?createReply(body):draftAPI(null)))}
+      catch{return reply(res,200,{status:'not_configured'})}
+    }
     if (req.url === '/signin') return reply(res, 200, { status: signIn(body.source) });
     if (req.url === '/status') {
       let signin = null;

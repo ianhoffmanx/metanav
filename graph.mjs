@@ -158,11 +158,11 @@ export async function calendar(app, store, { from, to, fetchImpl = fetch, timezo
 }
 
 // What the collector puts in the inputs: never throws, and says plainly when Graph is not signed in or not reachable
-export async function graphInputs({ now = new Date(), app, store = fileStore(), fetchImpl = fetch, provider = config.graph?.provider, sdk = runSDK, mailSince, first = false, mailConfig = config.mail } = {}) {
+export async function graphInputs({ now = new Date(), app, store = fileStore(), fetchImpl = fetch, provider = config.graph?.provider, sdk = runSDK, mailSince, first = false, mailConfig = config.mail, trackedConversations=[] } = {}) {
   try {
     if (provider === 'microsoft-sdk') {
       const w=calendarWindow(now), timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const result=await sdk('read',{tenant:(app||graphApp()).tenant,login_hint:config.microsoft_account,from:w.from.toISOString(),to:w.to.toISOString(),timezone,...(mailSince?{mail_since:mailSince,mail_folders:mailFolders(mailConfig),first}:{})});
+      const result=await sdk('read',{tenant:(app||graphApp()).tenant,login_hint:config.microsoft_account,from:w.from.toISOString(),to:w.to.toISOString(),timezone,...(mailSince?{mail_since:mailSince,mail_folders:mailFolders(mailConfig),first,tracked_conversations:trackedConversations}:{})});
       if(result.mail)result.mail=mailInput(result.mail,{timezone});
       if(!result.ok)return {...result,provider,error:result.note||result.error};
       return {...result,timezone,from:w.from.toISOString(),to:w.to.toISOString(),calendar:result.calendar.map(eventOf)};
